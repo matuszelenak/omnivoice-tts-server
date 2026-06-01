@@ -1,0 +1,26 @@
+services:
+  server:
+    container_name: omnivoice-tts-server
+    build:
+      context: .
+      dockerfile: prod.Dockerfile
+    ports:
+      - "9001:9001"
+    environment:
+      - NUM_WORKERS=${NUM_WORKERS:-1}
+      - DEVICES=${DEVICES}
+      - SAMPLES_DIR=${SAMPLES_DIR:-/app/samples}
+      - HF_TOKEN=${HF_TOKEN}
+    volumes:
+      - ${HF_HOME:-./server/models}:/cache/hf
+      - ${HF_HOME:-./server/cache}:/cache/torch
+      - ./server/samples:${SAMPLES_DIR:-/app/samples}
+    shm_size: "2gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    restart: unless-stopped

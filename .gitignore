@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node / Deno
+node_modules/
+frontend/dist/
+deno.lock
+
+# Env / local
+.env
+
+# Editor
+.idea/
+.vscode/
+
+# Audio scratch
+*.wav
+.idea
