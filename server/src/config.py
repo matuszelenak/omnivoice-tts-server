@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # default) disables static serving so the Vite dev server handles the UI.
     # The production image sets this to the baked-in build (e.g. /app/static).
     static_dir: str = ""
-    samples_dir: Path = ""
+    voice_samples_dir: Path = ""
 
     @field_validator("devices", mode="before")
     @classmethod

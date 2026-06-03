@@ -47,24 +47,62 @@ export async function deleteVoice(voiceId: string): Promise<void> {
   }
 }
 
-export async function synthesize(params: SynthesisParams): Promise<Blob> {
+function buildSynthForm(params: SynthesisParams): FormData {
   const form = new FormData()
   form.append('text', params.text)
   form.append('language', params.language)
-  if (params.speed != null && params.speed !== 1.0) {
-    form.append('speed', String(params.speed))
-  }
+  if (params.speed != null && params.speed !== 1.0) form.append('speed', String(params.speed))
   if (params.voiceId) {
     form.append('voice_id', params.voiceId)
   } else if (params.refAudio) {
     form.append('ref_audio', params.refAudio)
     if (params.refText) form.append('ref_text', params.refText)
   }
+  return form
+}
 
-  const res = await fetch(`${BASE}/v1/synthesize`, { method: 'POST', body: form })
+export async function synthesize(params: SynthesisParams): Promise<Blob> {
+  const res = await fetch(`${BASE}/v1/synthesize`, { method: 'POST', body: buildSynthForm(params) })
   if (!res.ok) {
     const detail = await res.json().then((d) => d.detail).catch(() => res.statusText)
     throw new Error(detail)
   }
   return res.blob()
+}
+
+export async function* synthesizeStream(params: SynthesisParams, signal?: AbortSignal): AsyncGenerator<ArrayBuffer> {
+  const res = await fetch(`${BASE}/v1/synthesize/stream`, { method: 'POST', body: buildSynthForm(params), signal })
+  if (!res.ok) {
+    const detail = await res.json().then((d: { detail: string }) => d.detail).catch(() => res.statusText)
+    throw new Error(detail)
+  }
+
+  const reader = res.body!.getReader()
+  let pending = new Uint8Array(0)
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+
+      if (value) {
+        const merged = new Uint8Array(pending.length + value.length)
+        merged.set(pending)
+        merged.set(value, pending.length)
+        pending = merged
+      }
+
+      while (pending.length >= 4) {
+        const size = new DataView(pending.buffer, pending.byteOffset).getUint32(0, false)
+        if (pending.length < 4 + size) break
+        const chunk = new Uint8Array(size)
+        chunk.set(pending.subarray(4, 4 + size))
+        yield chunk.buffer
+        pending = pending.slice(4 + size)
+      }
+
+      if (done) break
+    }
+  } finally {
+    reader.releaseLock()
+  }
 }

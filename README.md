@@ -21,7 +21,7 @@ In **production**, the frontend is compiled and served as static files by the sa
 │   ├── src/
 │   │   ├── config.py
 │   │   └── chunker.py
-│   ├── samples/     # Built-in voice samples (.wav + .txt pairs)
+│   ├── voices/     # Built-in voice samples (.wav + .txt pairs)
 │   └── Dockerfile
 ├── frontend/        # Svelte 5 web UI
 │   └── src/
@@ -82,7 +82,7 @@ docker compose -f docker-compose.prod.yml up -d
 |---|---|---|
 | `NUM_WORKERS` | `1` | Number of inference workers |
 | `DEVICES` | _(auto)_ | Comma-separated CUDA device list, e.g. `cuda:0,cuda:1` |
-| `SAMPLES_DIR` | `/app/samples` | Path to built-in voice samples inside the container |
+| `VOICE_SAMPLES_DIR` | `/app/voices` | Path to built-in voice samples inside the container |
 | `STATIC_DIR` | _(unset)_ | Path to compiled frontend static files (set automatically in prod) |
 | `HF_HOME` | `./server/models` | Host path for the Hugging Face model cache |
 | `HF_TOKEN` | _(unset)_ | Hugging Face token for gated models |
@@ -93,7 +93,7 @@ docker compose -f docker-compose.prod.yml up -d
 The frontend provides:
 
 - Language selection (ISO 639-3 codes or full names)
-- Built-in voice picker (loaded from `server/samples/`)
+- Built-in voice picker (loaded from `server/voices/`)
 - Voice cloning from an uploaded audio file (WAV, MP3, FLAC, OGG)
 - Optional reference transcript to improve cloning quality
 - Speech speed control (0.5× – 2.0×)
@@ -101,10 +101,10 @@ The frontend provides:
 
 ## Adding built-in voices
 
-Place a `.wav` file in `server/samples/`. Optionally add a `.txt` file with the same stem containing the transcript of the recording — this improves cloning quality.
+Place a `.wav` file in `server/voices/`. Optionally add a `.txt` file with the same stem containing the transcript of the recording — this improves cloning quality.
 
 ```
-server/samples/
+server/voices/
   alice.wav
   alice.txt    # "Hi, this is Alice speaking."
 ```
@@ -137,7 +137,7 @@ curl -X POST http://localhost:9001/v1/synthesize \
 
 ```bash
 python scripts/test_endpoint.py \
-  --ref-audio server/samples/alice.wav \
+  --ref-audio server/voices/alice.wav \
   --ref-text "Hi, this is Alice speaking." \
   --text "The quick brown fox jumps over the lazy dog." \
   --output out.wav

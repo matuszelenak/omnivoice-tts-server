@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import type { Language, Voice } from './lib/types.js'
   import * as api from './lib/api.js'
   import LanguageSelect from './lib/LanguageSelect.svelte'
@@ -27,6 +27,29 @@
 
   let fileInput: HTMLInputElement | undefined = $state()
 
+  let audioCtx: AudioContext | null = null
+  let nextPlayAt = 0
+  let rawChunks: ArrayBuffer[] = []
+  let firstChunkDelay = $state<number | null>(null)
+  let abortCtrl: AbortController | null = null
+  let scheduledSources: AudioBufferSourceNode[] = []
+
+  function combineWavBuffers(chunks: ArrayBuffer[]): Blob {
+    if (chunks.length === 0) return new Blob([], { type: 'audio/wav' })
+    if (chunks.length === 1) return new Blob([chunks[0]], { type: 'audio/wav' })
+
+    const HEADER = 44
+    const pcmParts = chunks.map((buf) => buf.slice(HEADER))
+    const totalPcm = pcmParts.reduce((s, p) => s + p.byteLength, 0)
+
+    const header = chunks[0].slice(0, HEADER)
+    const view = new DataView(header)
+    view.setUint32(4, 36 + totalPcm, true)
+    view.setUint32(40, totalPcm, true)
+
+    return new Blob([header, ...pcmParts], { type: 'audio/wav' })
+  }
+
   onMount(async () => {
     try {
       const health = await api.checkHealth()
@@ -44,32 +67,74 @@
     }
   })
 
+  onDestroy(() => {
+    abortCtrl?.abort()
+    audioCtx?.close()
+    if (resultUrl) URL.revokeObjectURL(resultUrl)
+  })
+
+  function handleStop() {
+    abortCtrl?.abort()
+    scheduledSources.forEach((s) => { try { s.stop() } catch { /* already stopped */ } })
+    scheduledSources = []
+  }
+
   async function handleSynthesize() {
     if (!text.trim() || synthesizing) return
     synthesizing = true
     synthError = null
+    rawChunks = []
+    scheduledSources = []
+    firstChunkDelay = null
 
     if (resultUrl) {
       URL.revokeObjectURL(resultUrl)
       resultUrl = null
     }
 
+    audioCtx?.close()
+    audioCtx = new AudioContext()
+    if (audioCtx.state === 'suspended') await audioCtx.resume()
+    nextPlayAt = audioCtx.currentTime + 0.1
+
+    abortCtrl = new AbortController()
+    const startTime = Date.now()
+    let firstChunk = true
+
     try {
-      const blob = await api.synthesize({
+      for await (const wavBuf of api.synthesizeStream({
         text: text.trim(),
         language,
         speed: speed !== 1.0 ? speed : undefined,
         voiceId: !useCustomVoice && selectedVoiceId ? selectedVoiceId : undefined,
         refAudio: useCustomVoice && customFile ? customFile : undefined,
         refText: useCustomVoice && refText.trim() ? refText.trim() : undefined,
-      })
-      resultUrl = URL.createObjectURL(blob)
-      // auto-play after render tick
-      setTimeout(() => resultAudioEl?.play(), 50)
+      }, abortCtrl.signal)) {
+        if (firstChunk) {
+          firstChunkDelay = Date.now() - startTime
+          firstChunk = false
+        }
+        rawChunks.push(wavBuf.slice(0))
+
+        const decoded = await audioCtx.decodeAudioData(wavBuf)
+        const src = audioCtx.createBufferSource()
+        src.buffer = decoded
+        src.connect(audioCtx.destination)
+        const playAt = Math.max(nextPlayAt, audioCtx.currentTime + 0.05)
+        src.start(playAt)
+        nextPlayAt = playAt + decoded.duration
+        scheduledSources.push(src)
+      }
     } catch (e) {
-      synthError = e instanceof Error ? e.message : 'Synthesis failed'
+      if (e instanceof Error && e.name !== 'AbortError') {
+        synthError = e instanceof Error ? e.message : 'Synthesis failed'
+      }
     } finally {
       synthesizing = false
+    }
+
+    if (rawChunks.length > 0) {
+      resultUrl = URL.createObjectURL(combineWavBuffers(rawChunks))
     }
   }
 
@@ -154,7 +219,7 @@
         {#if voices.length === 0}
           <p class="hint">
             No voice samples found. Place <code>.wav</code> + <code>.txt</code> pairs in
-            <code>server/samples/</code> or set <code>SAMPLES_DIR</code>.
+            <code>server/voices/</code> or set <code>VOICE_SAMPLES_DIR</code>.
           </p>
         {/if}
       {:else}
@@ -235,16 +300,20 @@
 
     <button
       class="synth-btn"
+      class:stop={synthesizing}
       type="button"
-      disabled={!canSynthesize}
-      onclick={handleSynthesize}
+      disabled={!synthesizing && !canSynthesize}
+      onclick={synthesizing ? handleStop : handleSynthesize}
     >
       {#if synthesizing}
-        <span class="spinner"></span> Synthesizing…
+        <span class="spinner"></span> Synthesizing… <span class="stop-label">■ Stop</span>
       {:else}
         ▶&nbsp; Synthesize
       {/if}
     </button>
+    {#if firstChunkDelay !== null}
+      <p class="stream-hint">First audio chunk received in {(firstChunkDelay / 1000).toFixed(1)} s</p>
+    {/if}
 
     {#if synthError}
       <div class="banner banner-error">✕ {synthError}</div>
@@ -253,7 +322,7 @@
     {#if resultUrl}
       <div class="card result-card">
         <div class="result-header">
-          <span class="field-label">Result</span>
+          <span class="field-label">Replay / Download</span>
           <button class="download-btn" type="button" onclick={handleDownload} title="Download WAV">
             ↓ Download
           </button>
@@ -559,9 +628,26 @@
     background: var(--primary-hover);
   }
 
+  .synth-btn.stop:hover:not(:disabled) {
+    background: var(--error);
+  }
+
   .synth-btn:disabled {
     opacity: 0.45;
     cursor: not-allowed;
+  }
+
+  .stop-label {
+    margin-left: 0.5rem;
+    font-size: 0.8rem;
+    opacity: 0.75;
+  }
+
+  .stream-hint {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin: -0.25rem 0 0;
   }
 
   .spinner {

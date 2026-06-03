@@ -19,6 +19,7 @@ const target = apiTarget()
 export default defineConfig({
   plugins: [svelte()],
   server: {
+    allowedHosts: ['omnivoice-dev.the-killer.app'],
     host: '0.0.0.0',
     port: 5173,
     // Polling makes file changes reliable inside containers / bind mounts,
