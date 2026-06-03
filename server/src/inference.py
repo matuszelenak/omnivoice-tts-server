@@ -77,7 +77,7 @@ def save_voice_sample(
     (samples_dir / f"{slug}.txt").write_text(ref_text, encoding="utf-8")
 
 
-def infer_chunk(
+def infer(
     model,
     text: str,
     language: str,
@@ -85,8 +85,9 @@ def infer_chunk(
     ref_audio_path: str | None,
     ref_text: str | None,
     instruct: str | None = None,
+    num_step: int | None = None,
 ) -> bytes:
-    """Synthesise a single pre-split sentence and return raw WAV bytes."""
+    """Synthesise text and return raw WAV bytes."""
     shared: dict = {"language": language}
     if ref_audio_path:
         shared["ref_audio"] = ref_audio_path
@@ -96,6 +97,8 @@ def infer_chunk(
         shared["speed"] = speed
     if instruct:
         shared["instruct"] = instruct
+    if num_step is not None:
+        shared["num_step"] = num_step
 
     audio = model.generate(text=text, **shared)[0]
 
@@ -105,33 +108,3 @@ def infer_chunk(
         f.write(audio)
     buf.seek(0)
     return buf.read()
-
-
-def infer_full(
-    model,
-    text: str,
-    language: str,
-    speed: float | None,
-    ref_audio_path: str | None,
-    ref_text: str | None,
-    instruct: str | None = None,
-) -> io.BytesIO:
-    """Synthesise text as a single model call and return a WAV buffer."""
-    shared: dict = {"language": language}
-    if ref_audio_path:
-        shared["ref_audio"] = ref_audio_path
-    if ref_text:
-        shared["ref_text"] = ref_text
-    if speed is not None:
-        shared["speed"] = speed
-    if instruct:
-        shared["instruct"] = instruct
-
-    audio = model.generate(text=text, **shared)[0]
-
-    buf = io.BytesIO()
-    with sf.SoundFile(buf, mode="w", samplerate=24000, channels=1,
-                      format="WAV", subtype="PCM_16", closefd=False) as f:
-        f.write(audio)
-    buf.seek(0)
-    return buf

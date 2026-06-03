@@ -1,4 +1,5 @@
 import asyncio
+import io
 import logging
 import os
 import queue
@@ -27,14 +28,13 @@ from omnivoice.utils.lang_map import LANG_IDS, LANG_NAME_TO_ID, LANG_NAMES, lang
 from starlette.staticfiles import StaticFiles
 from stream2sentence import generate_sentences
 
-from src.chunker import split_text
+from src.chunker import split_to_sentences
 from src.config import settings
 from src.inference import (
     AUDIO_EXTENSIONS,
     audio_media_type,
     find_voice_file,
-    infer_chunk,
-    infer_full,
+    infer,
     resolve_voice,
     save_voice_sample,
 )
@@ -60,6 +60,14 @@ async def lifespan(_app: FastAPI):
         device_map=device,
         dtype=torch.float16,
     )
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(
+            _executor, infer, _model, "Hello.", "en", None, None, None, None
+        )
+        logfire.info("model warm-up complete")
+    except Exception as exc:
+        logfire.warning("model warm-up failed: {exc}", exc=exc)
     yield
     _executor.shutdown(wait=False)
 
@@ -165,25 +173,26 @@ async def synthesize(
 
     if not stream:
         try:
-            buf = await loop.run_in_executor(
-                _executor, infer_full, _model, text, language, speed, effective_ref, effective_ref_text, effective_instruct
+            data = await loop.run_in_executor(
+                _executor, infer, _model, text, language, speed, effective_ref, effective_ref_text, effective_instruct
             )
         finally:
             if tmp_path:
                 os.unlink(tmp_path)
         return StreamingResponse(
-            buf,
+            io.BytesIO(data),
             media_type="audio/wav",
             headers={"Content-Disposition": "attachment; filename=output.wav"},
         )
 
-    text_chunks = split_text(text.strip()) if text.strip() else []
+    text_sentences = split_to_sentences(text.strip()) if text.strip() else []
 
     async def generate():
         try:
-            for chunk_text in text_chunks:
+            for sentence_id, sentence in enumerate(text_sentences):
+                num_steps = 16 if sentence_id == 0 else 32
                 data = await loop.run_in_executor(
-                    _executor, infer_chunk, _model, chunk_text, language, speed, effective_ref, effective_ref_text, effective_instruct
+                    _executor, infer, _model, sentence, language, speed, effective_ref, effective_ref_text, effective_instruct, num_steps
                 )
                 yield struct.pack(">I", len(data)) + data
         finally:
@@ -241,12 +250,16 @@ async def ws_synthesize(
 
     def _process():
         try:
-            for sentence in generate_sentences(_text_gen()):
+            for sentence_id, sentence in enumerate(generate_sentences(_text_gen())):
+                if sentence_id == 0:
+                    num_steps = 16
+                else:
+                    num_steps = 32
                 sentence = sentence.strip()
                 if not sentence:
                     continue
                 audio = _executor.submit(
-                    infer_chunk, _model, sentence, language, speed, effective_ref, effective_ref_text, effective_instruct
+                    infer, _model, sentence, language, speed, effective_ref, effective_ref_text, effective_instruct
                 ).result()
                 asyncio.run_coroutine_threadsafe(audio_q.put(audio), loop).result()
         except Exception:
