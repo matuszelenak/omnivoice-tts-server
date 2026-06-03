@@ -47,22 +47,27 @@ export async function deleteVoice(voiceId: string): Promise<void> {
   }
 }
 
-function buildSynthForm(params: SynthesisParams): FormData {
+const WS_BASE = BASE.replace(/^http/, 'ws')
+
+function buildSynthForm(params: SynthesisParams, stream = false): FormData {
   const form = new FormData()
   form.append('text', params.text)
   form.append('language', params.language)
   if (params.speed != null && params.speed !== 1.0) form.append('speed', String(params.speed))
-  if (params.voiceId) {
-    form.append('voice_id', params.voiceId)
-  } else if (params.refAudio) {
+  if (params.refAudio) {
     form.append('ref_audio', params.refAudio)
-    if (params.refText) form.append('ref_text', params.refText)
+    form.append('ref_text', params.refText ?? '')
+    if (params.refVoiceName) form.append('ref_voice_name', params.refVoiceName)
+  } else if (params.voiceId) {
+    form.append('voice_id', params.voiceId)
   }
+  if (params.instruct) form.append('instruct', params.instruct)
+  if (stream) form.append('stream', 'true')
   return form
 }
 
 export async function synthesize(params: SynthesisParams): Promise<Blob> {
-  const res = await fetch(`${BASE}/v1/synthesize`, { method: 'POST', body: buildSynthForm(params) })
+  const res = await fetch(`${BASE}/v1/synthesize`, { method: 'POST', body: buildSynthForm(params, false) })
   if (!res.ok) {
     const detail = await res.json().then((d) => d.detail).catch(() => res.statusText)
     throw new Error(detail)
@@ -71,7 +76,7 @@ export async function synthesize(params: SynthesisParams): Promise<Blob> {
 }
 
 export async function* synthesizeStream(params: SynthesisParams, signal?: AbortSignal): AsyncGenerator<ArrayBuffer> {
-  const res = await fetch(`${BASE}/v1/synthesize/stream`, { method: 'POST', body: buildSynthForm(params), signal })
+  const res = await fetch(`${BASE}/v1/synthesize`, { method: 'POST', body: buildSynthForm(params, true), signal })
   if (!res.ok) {
     const detail = await res.json().then((d: { detail: string }) => d.detail).catch(() => res.statusText)
     throw new Error(detail)
@@ -106,3 +111,18 @@ export async function* synthesizeStream(params: SynthesisParams, signal?: AbortS
     reader.releaseLock()
   }
 }
+
+export function openSynthSocket(params: {
+  language: string
+  voiceId?: string
+  speed?: number
+  instruct?: string
+}): WebSocket {
+  const url = new URL(`${WS_BASE}/v1/ws/synthesize`)
+  url.searchParams.set('language', params.language)
+  if (params.voiceId) url.searchParams.set('voice_id', params.voiceId)
+  if (params.speed != null && params.speed !== 1.0) url.searchParams.set('speed', String(params.speed))
+  if (params.instruct) url.searchParams.set('instruct', params.instruct)
+  return new WebSocket(url.toString())
+}
+

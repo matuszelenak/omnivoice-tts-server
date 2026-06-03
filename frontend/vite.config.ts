@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
+import wasm from 'vite-plugin-wasm'
+import topLevelAwait from 'vite-plugin-top-level-await'
 
 // Where the dev server forwards same-origin API calls. On the host this is the
 // server's published port; inside docker compose it is the `server` service.
@@ -17,7 +19,7 @@ function apiTarget(): string {
 const target = apiTarget()
 
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [wasm(), topLevelAwait(), svelte()],
   server: {
     allowedHosts: ['omnivoice-dev.the-killer.app'],
     host: '0.0.0.0',
@@ -28,7 +30,8 @@ export default defineConfig({
     proxy: {
       '/v1': {
         target: target,
-        changeOrigin: true
+        changeOrigin: true,
+        ws: true
       },
       '/health': { target, changeOrigin: true },
     },

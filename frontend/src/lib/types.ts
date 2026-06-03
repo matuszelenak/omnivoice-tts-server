@@ -17,4 +17,6 @@ export interface SynthesisParams {
   voiceId?: string
   refAudio?: File
   refText?: string
+  refVoiceName?: string
+  instruct?: string
 }

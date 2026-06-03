@@ -87,17 +87,6 @@
 </script>
 
 <div class="voice-list">
-  <button
-    class="no-clone-card"
-    class:selected={value === null}
-    onclick={() => select(null)}
-    type="button"
-  >
-    <span class="no-clone-icon">🎙</span>
-    <span class="no-clone-label">No voice cloning</span>
-    <span class="no-clone-sub">Use the model's default voice</span>
-  </button>
-
   {#each voices as voice (voice.id)}
     <div class="voice-row" class:selected={value === voice.id}>
       <button class="voice-select" onclick={() => select(voice.id)} type="button">
@@ -154,48 +143,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
-  }
-
-  /* ── No-clone card ── */
-  .no-clone-card {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.6rem 0.875rem;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--text);
-    cursor: pointer;
-    text-align: left;
-    transition: border-color 0.15s, background 0.15s;
-    align-self: flex-start;
-  }
-
-  .no-clone-card:hover {
-    border-color: var(--primary);
-    background: var(--surface-3);
-  }
-
-  .no-clone-card.selected {
-    border-color: var(--primary);
-    background: color-mix(in srgb, var(--primary) 12%, var(--surface-2));
-  }
-
-  .no-clone-icon {
-    font-size: 1.1rem;
-    flex-shrink: 0;
-  }
-
-  .no-clone-label {
-    font-size: 0.85rem;
-    font-weight: 600;
-  }
-
-  .no-clone-sub {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin-left: auto;
   }
 
   /* ── Voice rows ── */

@@ -9,6 +9,11 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json"
   },
+  "dependencies": {
+    "tiktoken": "^1.0.22",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.6.0"
+  },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5",
     "@tsconfig/svelte": "^5.0.8",
