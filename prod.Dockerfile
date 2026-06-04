@@ -4,10 +4,10 @@
 # image, which serves it as static files alongside the API on a single port.
 #
 # Build from the repository root:
-#   docker build -f prod.Dockerfile -t parakeet-asr:prod .
+#   docker build -f prod.Dockerfile -t omnivoice-tts:prod .
 # Run (needs the NVIDIA Container Toolkit):
-#   docker run --gpus all -p 9000:9000 parakeet-asr:prod
-# Then open http://<host>:9000 — UI and API are served from the same origin.
+#   docker run --gpus all -p 9001:9001 omnivoice-tts:prod
+# Then open http://<host>:9001 — UI and API are served from the same origin.
 
 # ---- Stage 1: build the frontend with Deno ----
 FROM denoland/deno:2.8.1 AS frontend
@@ -47,9 +47,11 @@ ENV UV_LINK_MODE=copy \
 
 WORKDIR /app
 
-COPY server/pyproject.toml ./
+# Lockfile-first install keeps this (huge) layer byte-identical across builds
+# as long as dependencies don't change, maximizing remote cache hits.
+COPY server/pyproject.toml server/uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev
+    uv sync --frozen --no-dev
 
 COPY server/main.py ./main.py
 COPY server/src ./src
