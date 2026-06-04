@@ -8,6 +8,7 @@ export interface Voice {
   name: string
   filename: string
   refText: string | null
+  language: string | null
 }
 
 export interface SynthesisParams {

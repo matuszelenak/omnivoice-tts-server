@@ -17,7 +17,7 @@ A self-hosted text-to-speech service built on the [OmniVoice](https://huggingfac
 │       ├── config.py
 │       ├── chunker.py     # BlingFire sentence splitter
 │       └── inference.py   # Model call + WAV encoding
-│   ├── voices/     # Built-in voice samples (.wav + .txt pairs)
+│   ├── voices/     # Built-in voice samples (one directory per voice)
 │   └── Dockerfile
 ├── frontend/        # Svelte 5 / TypeScript web UI (Deno 2 + Vite)
 │   └── src/
@@ -127,15 +127,16 @@ The descriptor string is previewed live and passed to the model as an `instruct`
 
 ## Adding built-in voices
 
-Place a `.wav` file (or `.mp3`, `.flac`, `.ogg`, `.m4a`) in `server/voices/`. Optionally add a `.txt` file with the same stem containing the transcript of the recording — this improves cloning quality and is displayed in the UI.
+Each voice lives in its own directory under `server/voices/`. The directory name is the voice ID. It contains the reference audio named `voice.<ext>` (WAV, MP3, FLAC, OGG, M4A) and optionally a transcript file named `<language-id>.txt` — the file name doubles as the voice's language, and its content improves cloning quality.
 
 ```
 server/voices/
-  alice.wav
-  alice.txt    # "Hi, this is Alice speaking."
+  alice/
+    voice.wav
+    en.txt    # "Hi, this is Alice speaking."
 ```
 
-The voice ID is the filename stem (`alice`). Voices appear in the UI and via `GET /v1/voices` immediately without a restart.
+Voices appear in the UI and via `GET /v1/voices` immediately without a restart. Selecting a voice in the UI also switches the synthesis language to the voice's language (you can still override it afterwards).
 
 You can also upload and permanently save a custom voice directly from the UI by filling in the "Save as voice" field.
 
@@ -200,6 +201,21 @@ curl -X POST http://localhost:9001/v1/synthesize \
   -F "language=en" \
   -F "instruct=female, young adult, british accent" \
   --output output.wav
+```
+
+## Linting
+
+The server code is linted with [ruff](https://docs.astral.sh/ruff/) (config in `server/pyproject.toml`):
+
+```bash
+cd server && uv run ruff check .        # check
+cd server && uv run ruff check --fix .  # auto-fix
+```
+
+A pre-commit hook that lints staged server files lives in `.githooks/`. Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
 ```
 
 ## Testing

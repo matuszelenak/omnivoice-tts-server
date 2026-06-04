@@ -92,6 +92,9 @@
       <button class="voice-select" onclick={() => select(voice.id)} type="button">
         <div class="voice-header">
           <span class="voice-name">👤 {voice.name}</span>
+          {#if voice.language}
+            <span class="voice-lang">{voice.language}</span>
+          {/if}
           <span class="voice-file">{voice.filename}</span>
         </div>
         {#if voice.refText}
@@ -191,6 +194,19 @@
     font-size: 0.875rem;
     font-weight: 600;
     white-space: nowrap;
+  }
+
+  .voice-lang {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+    border-radius: 4px;
+    padding: 0.05em 0.4em;
+    flex-shrink: 0;
   }
 
   .voice-file {

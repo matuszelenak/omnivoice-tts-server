@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import io
 import logging
 import os
@@ -9,6 +10,7 @@ import threading
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from functools import partial
 from pathlib import Path
 from typing import Annotated
 
@@ -26,26 +28,24 @@ from fastapi.responses import FileResponse, StreamingResponse
 from omnivoice import OmniVoice
 from omnivoice.utils.lang_map import LANG_IDS, LANG_NAME_TO_ID, LANG_NAMES, lang_display_name
 from starlette.staticfiles import StaticFiles
+from starlette.websockets import WebSocketState
 from stream2sentence import generate_sentences
 
+from src import voices as voice_store
 from src.chunker import split_to_sentences
 from src.config import settings
-from src.inference import (
-    AUDIO_EXTENSIONS,
-    audio_media_type,
-    find_voice_file,
-    infer,
-    resolve_voice,
-    save_voice_sample,
-)
-
+from src.inference import infer
 
 logfire.configure(
-    service_name="parakeet-asr-server",
+    service_name="omnivoice-tts-server",
     send_to_logfire="if-token-present",
     scrubbing=False,
 )
 
+# Fewer diffusion steps on the first sentence of a stream trades a little
+# quality for a faster first audio chunk.
+NUM_STEPS_FIRST_SENTENCE = 16
+NUM_STEPS = 32
 
 _executor = ThreadPoolExecutor(max_workers=1)
 _model: OmniVoice | None = None
@@ -54,17 +54,14 @@ _model: OmniVoice | None = None
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global _model
-    device = os.getenv("DEVICE_MAP", "cuda:0")
     _model = OmniVoice.from_pretrained(
         "k2-fsa/OmniVoice",
-        device_map=device,
+        device_map=settings.device_map,
         dtype=torch.float16,
     )
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
-        await loop.run_in_executor(
-            _executor, infer, _model, "Hello.", "en", None, None, None, None
-        )
+        await loop.run_in_executor(_executor, partial(infer, _model, "Hello.", "en"))
         logfire.info("model warm-up complete")
     except Exception as exc:
         logfire.warning("model warm-up failed: {exc}", exc=exc)
@@ -88,8 +85,12 @@ _LANGUAGES = sorted(
 )
 
 
+def _language_supported(language: str) -> bool:
+    return language in LANG_IDS or language.lower() in LANG_NAMES
+
+
 def _validate_language(language: str) -> None:
-    if language not in LANG_IDS and language.lower() not in LANG_NAMES:
+    if not _language_supported(language):
         raise HTTPException(
             status_code=422,
             detail=(
@@ -119,6 +120,19 @@ def _validate_ref_audio_params(
         )
 
 
+def _normalize(value: str | None) -> str | None:
+    """Collapse empty / whitespace-only optional form fields to None."""
+    if value is None:
+        return None
+    return value.strip() or None
+
+
+def _unlink_quietly(path: str | None) -> None:
+    if path:
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+
+
 async def _save_upload(ref_audio: UploadFile) -> tuple[str, str]:
     """Write the upload to a temp file; return (tmp_path, original_ext)."""
     ext = os.path.splitext(ref_audio.filename or "")[1].lower() or ".wav"
@@ -145,10 +159,10 @@ async def synthesize(
     _validate_language(language)
     _validate_ref_audio_params(ref_audio, ref_text, ref_voice_name)
 
-    effective_instruct = instruct.strip() if instruct and instruct.strip() else None
-    if effective_instruct and (ref_audio is not None or voice_id):
+    instruct = _normalize(instruct)
+    if instruct and (ref_audio is not None or voice_id):
         raise HTTPException(status_code=422, detail="instruct cannot be combined with ref_audio or voice_id")
-    if not effective_instruct and ref_audio is None and not voice_id:
+    if not instruct and ref_audio is None and not voice_id:
         raise HTTPException(status_code=422, detail="voice cloning requires ref_audio or voice_id")
 
     # Common setup — clean up tmp_path on any error before branching.
@@ -157,50 +171,46 @@ async def synthesize(
         if ref_audio is not None:
             tmp_path, ext = await _save_upload(ref_audio)
             if ref_voice_name:
-                save_voice_sample(ref_voice_name, tmp_path, ext, ref_text.strip(), settings.voice_samples_dir)
+                voice_store.save_voice_sample(
+                    ref_voice_name, tmp_path, ext, ref_text.strip(), language, settings.voice_samples_dir
+                )
             effective_ref, effective_ref_text = tmp_path, ref_text.strip()
         else:
-            effective_ref, effective_ref_text = resolve_voice(voice_id, settings.voice_samples_dir, ref_text)
+            effective_ref, effective_ref_text = voice_store.resolve_voice(
+                voice_id, settings.voice_samples_dir, ref_text
+            )
     except Exception:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        _unlink_quietly(tmp_path)
         raise
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
+    synth = partial(
+        infer, _model,
+        language=language, speed=speed,
+        ref_audio_path=effective_ref, ref_text=effective_ref_text, instruct=instruct,
+    )
 
     if not stream:
         try:
-            data = await loop.run_in_executor(
-                _executor, infer, _model, text, language, speed, effective_ref, effective_ref_text, effective_instruct
-            )
+            data = await loop.run_in_executor(_executor, partial(synth, text))
         finally:
-            if tmp_path:
-                os.unlink(tmp_path)
+            _unlink_quietly(tmp_path)
         return StreamingResponse(
             io.BytesIO(data),
             media_type="audio/wav",
             headers={"Content-Disposition": "attachment; filename=output.wav"},
         )
 
-    text_sentences = split_to_sentences(text.strip()) if text.strip() else []
+    sentences = split_to_sentences(text)
 
     async def generate():
         try:
-            for sentence_id, sentence in enumerate(text_sentences):
-                num_steps = 16 if sentence_id == 0 else 32
-                data = await loop.run_in_executor(
-                    _executor, infer, _model, sentence, language, speed, effective_ref, effective_ref_text, effective_instruct, num_steps
-                )
+            for i, sentence in enumerate(sentences):
+                num_step = NUM_STEPS_FIRST_SENTENCE if i == 0 else NUM_STEPS
+                data = await loop.run_in_executor(_executor, partial(synth, sentence, num_step=num_step))
                 yield struct.pack(">I", len(data)) + data
         finally:
-            if tmp_path:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+            _unlink_quietly(tmp_path)
 
     return StreamingResponse(generate(), media_type="application/octet-stream")
 
@@ -219,27 +229,36 @@ async def ws_synthesize(
         await ws.close(code=1011, reason="Model not loaded")
         return
 
-    if language not in LANG_IDS and language.lower() not in LANG_NAMES:
+    if not _language_supported(language):
         await ws.close(code=1008, reason=f"Unsupported language '{language}'")
         return
 
-    effective_instruct = instruct.strip() if instruct and instruct.strip() else None
-
-    if effective_instruct:
+    instruct = _normalize(instruct)
+    if instruct:
         effective_ref, effective_ref_text = None, None
     elif voice_id:
         try:
-            effective_ref, effective_ref_text = resolve_voice(voice_id, settings.voice_samples_dir, None)
+            effective_ref, effective_ref_text = voice_store.resolve_voice(
+                voice_id, settings.voice_samples_dir, None
+            )
         except HTTPException as e:
             await ws.close(code=1008, reason=e.detail)
             return
     else:
-        await ws.close(code=1008, reason="voice cloning over WebSocket requires voice_id (file upload is not supported)")
+        await ws.close(
+            code=1008,
+            reason="voice cloning over WebSocket requires voice_id (file upload is not supported)",
+        )
         return
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     text_q: queue.Queue[str | None] = queue.Queue()
     audio_q: asyncio.Queue[bytes | None] = asyncio.Queue()
+    synth = partial(
+        infer, _model,
+        language=language, speed=speed,
+        ref_audio_path=effective_ref, ref_text=effective_ref_text, instruct=instruct,
+    )
 
     def _text_gen():
         while True:
@@ -249,21 +268,18 @@ async def ws_synthesize(
             yield chunk
 
     def _process():
+        sentence_idx = 0
         try:
-            for sentence_id, sentence in enumerate(generate_sentences(_text_gen())):
-                if sentence_id == 0:
-                    num_steps = 16
-                else:
-                    num_steps = 32
+            for sentence in generate_sentences(_text_gen()):
                 sentence = sentence.strip()
                 if not sentence:
                     continue
-                audio = _executor.submit(
-                    infer, _model, sentence, language, speed, effective_ref, effective_ref_text, effective_instruct
-                ).result()
+                num_step = NUM_STEPS_FIRST_SENTENCE if sentence_idx == 0 else NUM_STEPS
+                sentence_idx += 1
+                audio = _executor.submit(partial(synth, sentence, num_step=num_step)).result()
                 asyncio.run_coroutine_threadsafe(audio_q.put(audio), loop).result()
-        except Exception:
-            pass
+        except Exception as exc:
+            logfire.warning("ws synthesis aborted: {exc}", exc=exc)
         finally:
             asyncio.run_coroutine_threadsafe(audio_q.put(None), loop).result()
 
@@ -290,7 +306,7 @@ async def ws_synthesize(
         text_q.put(None)
 
     await send_task
-    if ws.client_state.value < 3:  # not already closed
+    if ws.client_state != WebSocketState.DISCONNECTED:
         await ws.close()
 
 
@@ -301,48 +317,28 @@ async def languages() -> list[dict]:
 
 @app.get("/v1/voices")
 async def voices() -> list[dict]:
-    if not settings.voice_samples_dir.is_dir():
-        return []
-    result = []
-    seen: set[str] = set()
-    for f in sorted(settings.voice_samples_dir.iterdir()):
-        if f.suffix.lower() not in AUDIO_EXTENSIONS or f.stem in seen:
-            continue
-        seen.add(f.stem)
-        name = f.stem.replace("_", " ").replace("-", " ").title()
-        txt = settings.voice_samples_dir / f"{f.stem}.txt"
-        ref_text = txt.read_text(encoding="utf-8").strip() if txt.is_file() else None
-        result.append({"id": f.stem, "name": name, "filename": f.name, "ref_text": ref_text})
-    return result
+    return voice_store.list_voices(settings.voice_samples_dir)
 
 
 @app.get("/v1/voices/{voice_id}/preview")
 async def voice_preview(voice_id: str) -> FileResponse:
-    if "/" in voice_id or "\\" in voice_id or ".." in voice_id:
-        raise HTTPException(status_code=400, detail="Invalid voice ID")
-    path = find_voice_file(settings.voice_samples_dir, voice_id)
+    voice_store.validate_voice_id(voice_id)
+    path = voice_store.find_voice_file(settings.voice_samples_dir, voice_id)
     if path is None:
         raise HTTPException(status_code=404, detail="Voice sample not found")
-    return FileResponse(path, media_type=audio_media_type(path))
+    return FileResponse(path, media_type=voice_store.audio_media_type(path))
 
 
 @app.delete("/v1/voices/{voice_id}")
 async def delete_voice(voice_id: str) -> dict:
-    if "/" in voice_id or "\\" in voice_id or ".." in voice_id:
-        raise HTTPException(status_code=400, detail="Invalid voice ID")
-    audio = find_voice_file(settings.voice_samples_dir, voice_id)
-    if audio is None:
-        raise HTTPException(status_code=404, detail="Voice sample not found")
-    audio.unlink()
-    txt = settings.voice_samples_dir / f"{voice_id}.txt"
-    if txt.is_file():
-        txt.unlink()
+    voice_store.delete_voice(settings.voice_samples_dir, voice_id)
     return {"deleted": voice_id}
 
 
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "model_loaded": _model is not None}
+
 
 if settings.static_dir:
     _static_path = Path(settings.static_dir)

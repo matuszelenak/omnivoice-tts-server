@@ -8,7 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
-voices/*.txt
-voices/*.wav
+voices/*
 models
 cache

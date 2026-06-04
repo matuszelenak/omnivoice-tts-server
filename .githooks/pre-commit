@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Pre-commit hook: lint staged Python files in server/ with ruff.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+
+# Staged Python files under server/ (added, copied, modified, renamed)
+mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACMR -- 'server/**/*.py' 'server/*.py')
+
+if [ ${#staged[@]} -eq 0 ]; then
+    exit 0
+fi
+
+echo "ruff: checking ${#staged[@]} staged file(s) in server/"
+cd "$repo_root/server"
+
+# Strip the server/ prefix so paths resolve relative to the project dir
+files=("${staged[@]/#server\//}")
+
+if ! uv run ruff check "${files[@]}"; then
+    echo
+    echo "✗ ruff found issues. Fix them (try: cd server && uv run ruff check --fix .) and re-stage."
+    exit 1
+fi

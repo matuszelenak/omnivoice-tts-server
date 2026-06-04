@@ -7,8 +7,7 @@ services:
     ports:
       - "9001:9001"
     environment:
-      - NUM_WORKERS=${NUM_WORKERS:-1}
-      - DEVICES=${DEVICES}
+      - DEVICE_MAP=${DEVICE_MAP:-cuda:0}
       - VOICE_SAMPLES_DIR=${VOICE_SAMPLES_DIR:-/app/voices}
       - HF_TOKEN=${HF_TOKEN}
     volumes:
