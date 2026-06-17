@@ -1,0 +1,43 @@
+stages:
+  - build
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+
+build-image:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - server/**/*
+        - frontend/**/*
+        - "*.Dockerfile"
+        - Dockerfile
+        - .gitlab-ci.yml
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  before_script:
+    - rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+    - docker image prune --all --force
+    - df -h /
+    - docker buildx create --use --name builder
+  script:
+    - |
+      TAGS="--tag omnivoice-tts-server:${CI_COMMIT_SHORT_SHA}"
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        TAGS="$TAGS --tag omnivoice-tts-server:${CI_COMMIT_BRANCH} --tag omnivoice-tts-server:latest"
+      fi
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^v//')
+        MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1-2)
+        TAGS="$TAGS --tag omnivoice-tts-server:${VERSION} --tag omnivoice-tts-server:${MAJOR_MINOR}"
+      fi
+      docker buildx build \
+        --file prod.Dockerfile \
+        --load \
+        $TAGS \
+        .
