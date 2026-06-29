@@ -159,12 +159,12 @@
     if (fileInput) fileInput.value = ''
   }
 
-  function synthParams() {
+  function synthParams(voiceIdOverride?: string) {
     return {
       text: text.trim(),
       language,
       speed: speed === 1.0 ? undefined : speed,
-      voiceId: activeTab === 'cloning' && !useCustomVoice && selectedVoiceId ? selectedVoiceId : undefined,
+      voiceId: voiceIdOverride ?? (activeTab === 'cloning' && !useCustomVoice && selectedVoiceId ? selectedVoiceId : undefined),
       refAudio: usingCustomAudio && customFile ? customFile : undefined,
       refText: usingCustomAudio ? refText.trim() : undefined,
       refVoiceName: usingCustomAudio && refVoiceName.trim() ? refVoiceName.trim() : undefined,
@@ -224,12 +224,12 @@
     activeWs = null
   }
 
-  async function runStream() {
+  async function runStream(voiceId?: string) {
     await player.init()
     abortCtrl = new AbortController()
     const timer = startTimer()
 
-    for await (const wavBuf of api.synthesizeStream(synthParams(), abortCtrl.signal)) {
+    for await (const wavBuf of api.synthesizeStream(synthParams(voiceId), abortCtrl.signal)) {
       timer.chunk()
       await player.schedule(wavBuf)
     }
@@ -237,9 +237,9 @@
     player.trackEnd()
   }
 
-  async function runFullAudio() {
+  async function runFullAudio(voiceId?: string) {
     const timer = startTimer()
-    const blob = await api.synthesize(synthParams())
+    const blob = await api.synthesize(synthParams(voiceId))
     timer.total()
     resultUrl = URL.createObjectURL(blob)
   }
@@ -257,9 +257,24 @@
     }
 
     try {
+      // When using custom audio with a voice name, save the voice first
+      // then synthesize using the newly created voice ID.
+      let effectiveVoiceId: string | undefined
+      if (usingCustomAudio && customFile && refVoiceName.trim()) {
+        const saved = await api.createVoice({
+          name: refVoiceName.trim(),
+          refAudio: customFile,
+          refText: refText.trim(),
+          language,
+        })
+        effectiveVoiceId = saved.id
+        // Refresh the voice list so the new voice appears
+        try { voices = await api.fetchVoices() } catch { /* non-critical */ }
+      }
+
       if (llmSimMode) await runLLMSim()
-      else if (streamMode) await runStream()
-      else await runFullAudio()
+      else if (streamMode) await runStream(effectiveVoiceId)
+      else await runFullAudio(effectiveVoiceId)
     } catch (e) {
       if (!(e instanceof Error && e.name === 'AbortError')) {
         synthError = e instanceof Error ? e.message : 'Synthesis failed'
@@ -271,13 +286,6 @@
     // Streamed sessions: offer whatever audio arrived (even partial) for replay/download.
     if (streaming && player.hasAudio && !resultUrl) {
       resultUrl = URL.createObjectURL(player.toBlob())
-    }
-
-    // A newly saved voice should show up in the list right away.
-    if (usingCustomAudio && refVoiceName.trim()) {
-      try {
-        voices = await api.fetchVoices()
-      } catch { /* non-critical */ }
     }
   }
 

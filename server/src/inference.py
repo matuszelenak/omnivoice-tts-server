@@ -1,6 +1,4 @@
-import io
-
-import soundfile as sf
+import numpy as np
 
 
 def infer(
@@ -12,8 +10,12 @@ def infer(
     ref_text: str | None = None,
     instruct: str | None = None,
     num_step: int | None = None,
-) -> bytes:
-    """Synthesise text and return raw WAV bytes."""
+) -> np.ndarray:
+    """Synthesise *text* and return the raw 24 kHz mono float sample array.
+
+    Encoding into a concrete container (WAV, MP3, …) is the caller's job — see
+    :mod:`src.audio`.
+    """
     kwargs: dict = {"language": language}
     if ref_audio_path:
         kwargs["ref_audio"] = ref_audio_path
@@ -26,11 +28,4 @@ def infer(
     if num_step is not None:
         kwargs["num_step"] = num_step
 
-    audio = model.generate(text=text, **kwargs)[0]
-
-    buf = io.BytesIO()
-    with sf.SoundFile(buf, mode="w", samplerate=24000, channels=1,
-                      format="WAV", subtype="PCM_16", closefd=False) as f:
-        f.write(audio)
-    buf.seek(0)
-    return buf.read()
+    return model.generate(text=text, **kwargs)[0]

@@ -1,4 +1,4 @@
-import type { Language, SynthesisParams, Voice } from './types.js'
+import type { Language, SpeechRequest, SynthesisParams, Voice } from './types.js'
 
 const configured = import.meta.env.VITE_API_BASE
 const BASE =
@@ -14,6 +14,8 @@ function camelizeKeys<T>(obj: Record<string, unknown>): T {
   ) as T
 }
 
+// ── Health / metadata ────────────────────────────────────────────────────
+
 export async function checkHealth(): Promise<{ status: string; modelLoaded: boolean }> {
   const res = await fetch(`${BASE}/health`)
   if (!res.ok) throw new Error('Server unreachable')
@@ -25,6 +27,8 @@ export async function fetchLanguages(): Promise<Language[]> {
   if (!res.ok) throw new Error('Failed to fetch languages')
   return res.json()
 }
+
+// ── Voice management ─────────────────────────────────────────────────────
 
 export async function fetchVoices(): Promise<Voice[]> {
   const res = await fetch(`${BASE}/v1/voices`)
@@ -47,70 +51,134 @@ export async function deleteVoice(voiceId: string): Promise<void> {
   }
 }
 
-const WS_BASE = BASE.replace(/^http/, 'ws')
-
-function buildSynthForm(params: SynthesisParams, stream = false): FormData {
+export async function createVoice(params: {
+  name: string
+  refText: string
+  refAudio: File
+  language?: string
+}): Promise<{ id: string; language: string }> {
   const form = new FormData()
-  form.append('text', params.text)
-  form.append('language', params.language)
-  if (params.speed != null && params.speed !== 1.0) form.append('speed', String(params.speed))
-  if (params.refAudio) {
-    form.append('ref_audio', params.refAudio)
-    form.append('ref_text', params.refText ?? '')
-    if (params.refVoiceName) form.append('ref_voice_name', params.refVoiceName)
-  } else if (params.voiceId) {
-    form.append('voice_id', params.voiceId)
-  }
-  if (params.instruct) form.append('instruct', params.instruct)
-  if (stream) form.append('stream', 'true')
-  return form
-}
+  form.append('name', params.name)
+  form.append('ref_text', params.refText)
+  form.append('ref_audio', params.refAudio)
+  if (params.language) form.append('language', params.language)
 
-export async function synthesize(params: SynthesisParams): Promise<Blob> {
-  const res = await fetch(`${BASE}/v1/synthesize`, { method: 'POST', body: buildSynthForm(params, false) })
+  const res = await fetch(`${BASE}/v1/voices`, { method: 'POST', body: form })
   if (!res.ok) {
     const detail = await res.json().then((d) => d.detail).catch(() => res.statusText)
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+// ── Speech synthesis (OpenAI-compatible) ──────────────────────────────────
+
+/** Build a SpeechRequest from the UI's SynthesisParams. */
+function buildSpeechRequest(params: SynthesisParams, opts?: { streamFormat?: 'audio' | 'sse' }): SpeechRequest {
+  const req: SpeechRequest = {
+    input: params.text.trim(),
+    language: params.language,
+    response_format: 'wav', // Web Audio API decodes WAV natively
+    stream_format: opts?.streamFormat ?? 'audio',
+  }
+
+  if (params.speed != null && params.speed !== 1.0) {
+    req.speed = params.speed
+  }
+
+  // Voice selection: stored voice (cloning) or instructions (design mode)
+  if (params.voiceId) {
+    req.voice = params.voiceId
+  } else if (params.instruct) {
+    req.instructions = params.instruct
+  }
+
+  return req
+}
+
+/** Non-streaming synthesis — returns a single audio Blob. */
+export async function synthesize(params: SynthesisParams): Promise<Blob> {
+  const req = buildSpeechRequest(params, { streamFormat: 'audio' })
+  const res = await fetch(`${BASE}/v1/audio/speech`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) {
+    const detail = await res.json().then((d: { detail: string }) => d.detail).catch(() => res.statusText)
     throw new Error(detail)
   }
   return res.blob()
 }
 
-export async function* synthesizeStream(params: SynthesisParams, signal?: AbortSignal): AsyncGenerator<ArrayBuffer> {
-  const res = await fetch(`${BASE}/v1/synthesize`, { method: 'POST', body: buildSynthForm(params, true), signal })
+/**
+ * Streaming synthesis via SSE — yields WAV audio chunks as they arrive.
+ *
+ * Each SSE delta is base64-encoded WAV audio. We decode and yield the raw
+ * ArrayBuffer so the StreamingPlayer can schedule it immediately.
+ */
+export async function* synthesizeStream(
+  params: SynthesisParams,
+  signal?: AbortSignal,
+): AsyncGenerator<ArrayBuffer> {
+  const req = buildSpeechRequest(params, { streamFormat: 'sse' })
+  const res = await fetch(`${BASE}/v1/audio/speech`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+    signal,
+  })
   if (!res.ok) {
     const detail = await res.json().then((d: { detail: string }) => d.detail).catch(() => res.statusText)
     throw new Error(detail)
   }
 
   const reader = res.body!.getReader()
-  let pending = new Uint8Array(0)
+  const decoder = new TextDecoder()
+  let buffer = ''
 
   try {
     while (true) {
       const { done, value } = await reader.read()
-
-      if (value) {
-        const merged = new Uint8Array(pending.length + value.length)
-        merged.set(pending)
-        merged.set(value, pending.length)
-        pending = merged
-      }
-
-      while (pending.length >= 4) {
-        const size = new DataView(pending.buffer, pending.byteOffset).getUint32(0, false)
-        if (pending.length < 4 + size) break
-        const chunk = new Uint8Array(size)
-        chunk.set(pending.subarray(4, 4 + size))
-        yield chunk.buffer
-        pending = pending.slice(4 + size)
-      }
-
       if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+
+      // Parse SSE events from the buffer
+      const lines = buffer.split('\n')
+      // Keep the last (potentially incomplete) line in the buffer
+      buffer = lines.pop() ?? ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const data = line.slice(6).trim()
+        if (!data) continue
+
+        try {
+          const event = JSON.parse(data)
+          if (event.type === 'speech.audio.delta' && event.audio) {
+            // Decode base64 WAV chunk
+            const binaryStr = atob(event.audio)
+            const bytes = new Uint8Array(binaryStr.length)
+            for (let i = 0; i < binaryStr.length; i++) {
+              bytes[i] = binaryStr.charCodeAt(i)
+            }
+            yield bytes.buffer
+          }
+          // speech.audio.done signals completion
+        } catch {
+          // Skip malformed JSON lines
+        }
+      }
     }
   } finally {
     reader.releaseLock()
   }
 }
+
+// ── WebSocket (LLM simulation mode) ──────────────────────────────────────
+
+const WS_BASE = BASE.replace(/^http/, 'ws')
 
 export function openSynthSocket(params: {
   language: string
@@ -125,4 +193,3 @@ export function openSynthSocket(params: {
   if (params.instruct) url.searchParams.set('instruct', params.instruct)
   return new WebSocket(url.toString())
 }
-
