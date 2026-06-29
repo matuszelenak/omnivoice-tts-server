@@ -1,10 +1,10 @@
 import asyncio
+import base64
 import contextlib
-import io
+import json
 import logging
 import os
 import queue
-import struct
 import tempfile
 import threading
 import warnings
@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import transformers
 
@@ -24,15 +24,16 @@ import logfire
 import torch
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from omnivoice import OmniVoice
 from omnivoice.utils.lang_map import LANG_IDS, LANG_NAME_TO_ID, LANG_NAMES, lang_display_name
+from pydantic import BaseModel, Field
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocketState
 from stream2sentence import generate_sentences
 
 from openai import AsyncOpenAI
-
+from src import audio
 from src import voices as voice_store
 from src.chunker import split_to_sentences
 from src.config import settings
@@ -117,32 +118,13 @@ def _validate_language(language: str) -> None:
             detail=(
                 f"Unsupported language '{language}'. "
                 "Use an ISO 639-3 code (e.g. 'en', 'sk') or a full name "
-                "(e.g. 'English', 'Slovak'). See GET /languages for the full list."
+                "(e.g. 'English', 'Slovak'). See GET /v1/languages for the full list."
             ),
         )
 
 
-def _validate_ref_audio_params(
-    ref_audio: UploadFile | None,
-    ref_text: str | None,
-    ref_voice_name: str | None,
-) -> None:
-    has_audio = ref_audio is not None
-    has_text = bool(ref_text and ref_text.strip())
-    if has_audio != has_text:
-        raise HTTPException(
-            status_code=422,
-            detail="ref_audio and ref_text must both be provided or both omitted",
-        )
-    if ref_voice_name and not has_audio:
-        raise HTTPException(
-            status_code=422,
-            detail="ref_voice_name requires ref_audio and ref_text to be provided",
-        )
-
-
 def _normalize(value: str | None) -> str | None:
-    """Collapse empty / whitespace-only optional form fields to None."""
+    """Collapse empty / whitespace-only optional fields to None."""
     if value is None:
         return None
     return value.strip() or None
@@ -162,81 +144,170 @@ async def _save_upload(ref_audio: UploadFile) -> tuple[str, str]:
         return tmp.name, ext
 
 
-@app.post("/v1/synthesize")
-async def synthesize(
-    text: Annotated[str, Form()],
-    language: Annotated[str, Form()] = "en",
-    speed: Annotated[float | None, Form()] = None,
-    ref_text: Annotated[str | None, Form()] = None,
-    ref_audio: Annotated[UploadFile | None, File()] = None,
-    voice_id: Annotated[str | None, Form()] = None,
-    ref_voice_name: Annotated[str | None, Form()] = None,
-    instruct: Annotated[str | None, Form()] = None,
-    sanitize: Annotated[bool, Form()] = True,
-    stream: Annotated[bool, Form()] = False,
-) -> StreamingResponse:
+# ── OpenAI-compatible speech synthesis ───────────────────────────────────────
+
+
+class SpeechRequest(BaseModel):
+    """Body of ``POST /v1/audio/speech`` — OpenAI's "Create speech" schema.
+
+    ``language`` and ``stream_format`` extend the OpenAI fields: OmniVoice needs
+    an explicit language, and ``stream_format`` selects between a single audio
+    body (the default) and a Server-Sent-Events stream of audio deltas.
+    """
+
+    model: str = "omnivoice"
+    input: str
+    voice: str | None = None
+    response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = "mp3"
+    speed: float = Field(default=1.0, ge=0.25, le=4.0)
+    instructions: str | None = None
+
+    # Extensions (not part of the OpenAI schema):
+    language: str = "en"
+    sanitize: bool = True
+    stream_format: Literal["audio", "sse"] = "audio"
+
+
+def _resolve_speech_voice(req: SpeechRequest) -> tuple[str | None, str | None, str | None]:
+    """Map the request onto OmniVoice inputs: (ref_audio_path, ref_text, instruct).
+
+    ``voice`` names a stored voice (cloning); ``instructions`` drives the
+    description-only "design" mode. OpenAI requires ``voice``, but OmniVoice can
+    also run from ``instructions`` alone, so we accept either.
+    """
+    instruct = _normalize(req.instructions)
+    voice = _normalize(req.voice)
+    if not voice and not instruct:
+        raise HTTPException(
+            status_code=400,
+            detail="Either 'voice' (a stored voice id) or 'instructions' must be provided",
+        )
+    ref_audio_path = ref_text = None
+    if voice:
+        ref_audio_path, ref_text = voice_store.resolve_voice(voice, settings.voice_samples_dir, None)
+    return ref_audio_path, ref_text, instruct
+
+
+def _sse(event: dict) -> bytes:
+    return f"data: {json.dumps(event)}\n\n".encode()
+
+
+@app.post("/v1/audio/speech")
+async def create_speech(req: SpeechRequest):
+    """Generate audio from text — OpenAI "Create speech" compatible endpoint."""
     if _model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
-    _validate_language(language)
-    _validate_ref_audio_params(ref_audio, ref_text, ref_voice_name)
-
-    instruct = _normalize(instruct)
-    if instruct and (ref_audio is not None or voice_id):
-        raise HTTPException(status_code=422, detail="instruct cannot be combined with ref_audio or voice_id")
-    if not instruct and ref_audio is None and not voice_id:
-        raise HTTPException(status_code=422, detail="voice cloning requires ref_audio or voice_id")
-
-    # Common setup — clean up tmp_path on any error before branching.
-    tmp_path: str | None = None
-    try:
-        if ref_audio is not None:
-            tmp_path, ext = await _save_upload(ref_audio)
-            if ref_voice_name:
-                voice_store.save_voice_sample(
-                    ref_voice_name, tmp_path, ext, ref_text.strip(), language, settings.voice_samples_dir
-                )
-            effective_ref, effective_ref_text = tmp_path, ref_text.strip()
-        else:
-            effective_ref, effective_ref_text = voice_store.resolve_voice(
-                voice_id, settings.voice_samples_dir, ref_text
-            )
-    except Exception:
-        _unlink_quietly(tmp_path)
-        raise
+    _validate_language(req.language)
+    ref_audio_path, ref_text, instruct = _resolve_speech_voice(req)
+    speed = None if req.speed == 1.0 else req.speed
+    fmt = req.response_format
+    sanitize_enabled = req.sanitize
 
     loop = asyncio.get_running_loop()
     synth = partial(
         infer, _model,
-        language=language, speed=speed,
-        ref_audio_path=effective_ref, ref_text=effective_ref_text, instruct=instruct,
+        language=req.language, speed=speed,
+        ref_audio_path=ref_audio_path, ref_text=ref_text, instruct=instruct,
     )
 
-    if not stream:
-        try:
-            clean = await _sanitize(text, sanitize)
-            data = await loop.run_in_executor(_executor, partial(synth, clean))
-        finally:
-            _unlink_quietly(tmp_path)
+    if req.stream_format == "sse":
         return StreamingResponse(
-            io.BytesIO(data),
-            media_type="audio/wav",
-            headers={"Content-Disposition": "attachment; filename=output.wav"},
+            _sse_stream(loop, synth, req.input, fmt, sanitize_enabled),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store"},
         )
 
-    sentences = split_to_sentences(text)
+    text = await _sanitize(req.input, sanitize_enabled)
+    samples = await loop.run_in_executor(_executor, partial(synth, text))
+    data = await loop.run_in_executor(_executor, partial(audio.encode, samples, fmt))
+    return Response(
+        content=data,
+        media_type=audio.content_type(fmt),
+        headers={"Content-Disposition": f'attachment; filename="speech.{fmt}"'},
+    )
 
-    async def generate():
-        try:
-            for i, sentence in enumerate(sentences):
-                clean = await _sanitize(sentence, sanitize)
-                num_step = NUM_STEPS_FIRST_SENTENCE if i == 0 else NUM_STEPS
-                data = await loop.run_in_executor(_executor, partial(synth, clean, num_step=num_step))
-                yield struct.pack(">I", len(data)) + data
-        finally:
-            _unlink_quietly(tmp_path)
 
-    return StreamingResponse(generate(), media_type="application/octet-stream")
+async def _sse_stream(loop, synth, text: str, fmt: str, sanitize_enabled: bool = True):
+    """Yield OpenAI ``speech.audio.delta`` / ``speech.audio.done`` SSE events.
+
+    One delta is emitted per sentence so playback can start before the whole
+    input is rendered. Each delta is independently decodable; streamable codecs
+    (mp3/opus/aac/pcm) also concatenate into a single file, while wav/flac
+    deltas are meant to be decoded chunk by chunk.
+    """
+    for i, sentence in enumerate(split_to_sentences(text)):
+        num_step = NUM_STEPS_FIRST_SENTENCE if i == 0 else NUM_STEPS
+        clean = await _sanitize(sentence, sanitize_enabled)
+        samples = await loop.run_in_executor(_executor, partial(synth, clean, num_step=num_step))
+        data = await loop.run_in_executor(_executor, partial(audio.encode, samples, fmt))
+        yield _sse({"type": "speech.audio.delta", "audio": base64.b64encode(data).decode("ascii")})
+    yield _sse({"type": "speech.audio.done"})
+
+
+# ── Voice management ──────────────────────────────────────────────────────────
+
+
+@app.post("/v1/voices", status_code=201)
+async def create_voice(
+    name: Annotated[str, Form()],
+    ref_text: Annotated[str, Form()],
+    ref_audio: Annotated[UploadFile, File()],
+    language: Annotated[str, Form()] = "en",
+) -> dict:
+    """Register a cloned voice from a reference clip + transcript.
+
+    The resulting voice id can then be passed as ``voice`` to
+    ``POST /v1/audio/speech``.
+    """
+    _validate_language(language)
+    if not ref_text.strip():
+        raise HTTPException(status_code=422, detail="ref_text must not be empty")
+
+    tmp_path: str | None = None
+    try:
+        tmp_path, ext = await _save_upload(ref_audio)
+        voice_store.save_voice_sample(
+            name, tmp_path, ext, ref_text.strip(), language, settings.voice_samples_dir
+        )
+    finally:
+        _unlink_quietly(tmp_path)
+
+    voice_id = name.strip().replace(" ", "_")
+    return {"id": voice_id, "language": language}
+
+
+@app.get("/v1/voices")
+async def voices() -> list[dict]:
+    return voice_store.list_voices(settings.voice_samples_dir)
+
+
+@app.get("/v1/voices/{voice_id}/preview")
+async def voice_preview(voice_id: str) -> FileResponse:
+    voice_store.validate_voice_id(voice_id)
+    path = voice_store.find_voice_file(settings.voice_samples_dir, voice_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Voice sample not found")
+    return FileResponse(path, media_type=voice_store.audio_media_type(path))
+
+
+@app.delete("/v1/voices/{voice_id}")
+async def delete_voice(voice_id: str) -> dict:
+    voice_store.delete_voice(settings.voice_samples_dir, voice_id)
+    return {"deleted": voice_id}
+
+
+@app.get("/v1/languages")
+async def languages() -> list[dict]:
+    return _LANGUAGES
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {"status": "ok", "model_loaded": _model is not None}
+
+
+# ── WebSocket streaming (no OpenAI Speech equivalent; kept as an extension) ────
 
 
 @app.websocket("/v1/ws/synthesize")
@@ -247,6 +318,7 @@ async def ws_synthesize(
     speed: float | None = None,
     instruct: str | None = None,
     sanitize: bool = True,
+    response_format: str = "wav",
 ) -> None:
     await ws.accept()
 
@@ -256,6 +328,10 @@ async def ws_synthesize(
 
     if not _language_supported(language):
         await ws.close(code=1008, reason=f"Unsupported language '{language}'")
+        return
+
+    if response_format not in audio.RESPONSE_FORMATS:
+        await ws.close(code=1008, reason=f"Unsupported response_format '{response_format}'")
         return
 
     instruct = _normalize(instruct)
@@ -299,8 +375,9 @@ async def ws_synthesize(
                 if not sentence:
                     continue
                 clean = asyncio.run_coroutine_threadsafe(_sanitize(sentence, sanitize), loop).result()
-                audio = _executor.submit(partial(synth, clean)).result()
-                asyncio.run_coroutine_threadsafe(audio_q.put(audio), loop).result()
+                samples = _executor.submit(partial(synth, clean)).result()
+                data = audio.encode(samples, response_format)
+                asyncio.run_coroutine_threadsafe(audio_q.put(data), loop).result()
         except Exception as exc:
             logfire.warning("ws synthesis aborted: {exc}", exc=exc)
         finally:
@@ -310,10 +387,10 @@ async def ws_synthesize(
 
     async def _send_audio():
         while True:
-            audio = await audio_q.get()
-            if audio is None:
+            data = await audio_q.get()
+            if data is None:
                 break
-            await ws.send_bytes(audio)
+            await ws.send_bytes(data)
 
     send_task = asyncio.create_task(_send_audio())
 
@@ -331,36 +408,6 @@ async def ws_synthesize(
     await send_task
     if ws.client_state != WebSocketState.DISCONNECTED:
         await ws.close()
-
-
-@app.get("/v1/languages")
-async def languages() -> list[dict]:
-    return _LANGUAGES
-
-
-@app.get("/v1/voices")
-async def voices() -> list[dict]:
-    return voice_store.list_voices(settings.voice_samples_dir)
-
-
-@app.get("/v1/voices/{voice_id}/preview")
-async def voice_preview(voice_id: str) -> FileResponse:
-    voice_store.validate_voice_id(voice_id)
-    path = voice_store.find_voice_file(settings.voice_samples_dir, voice_id)
-    if path is None:
-        raise HTTPException(status_code=404, detail="Voice sample not found")
-    return FileResponse(path, media_type=voice_store.audio_media_type(path))
-
-
-@app.delete("/v1/voices/{voice_id}")
-async def delete_voice(voice_id: str) -> dict:
-    voice_store.delete_voice(settings.voice_samples_dir, voice_id)
-    return {"deleted": voice_id}
-
-
-@app.get("/health")
-async def health() -> dict:
-    return {"status": "ok", "model_loaded": _model is not None}
 
 
 if settings.static_dir:
