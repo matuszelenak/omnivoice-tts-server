@@ -4,9 +4,9 @@
 # image, which serves it as static files alongside the API on a single port.
 #
 # Build from the repository root:
-#   docker build -f prod.Dockerfile -t omnivoice-tts:prod .
+#   docker build -f prod.Dockerfile -t supertonic-tts:prod .
 # Run (needs the NVIDIA Container Toolkit):
-#   docker run --gpus all -p 9001:9001 omnivoice-tts:prod
+#   docker run --gpus all -p 9001:9001 supertonic-tts:prod
 # Then open http://<host>:9001 — UI and API are served from the same origin.
 
 # ---- Stage 1: build the frontend with Deno ----
@@ -42,7 +42,7 @@ ENV UV_LINK_MODE=copy \
     UV_CONCURRENT_INSTALLS=8 \
     HF_HOME=/cache/hf \
     HF_HUB_CACHE=/cache/hf/hub \
-    TORCH_HOME=/cache/torch \
+    SUPERTONIC_CACHE_DIR=/cache/supertonic \
     STATIC_DIR=/app/static
 
 WORKDIR /app
@@ -51,7 +51,10 @@ WORKDIR /app
 # as long as dependencies don't change, maximizing remote cache hits.
 COPY server/pyproject.toml server/uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev && \
+    find /app/.venv/lib -path "*/nvidia/*/lib" -type d \
+        | tee /etc/ld.so.conf.d/nvidia-pip-pkgs.conf \
+    && ldconfig
 
 COPY server/main.py ./main.py
 COPY server/src ./src
