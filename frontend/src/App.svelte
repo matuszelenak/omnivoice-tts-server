@@ -7,34 +7,6 @@
   import LanguageSelect from './lib/LanguageSelect.svelte'
   import VoiceSelect from './lib/VoiceSelect.svelte'
 
-  const EXPRESSION_TAGS = [
-    'laughter', 'sigh', 'confirmation-en', 'question-en', 'question-ah',
-    'question-oh', 'question-ei', 'question-yi', 'surprise-ah', 'surprise-oh',
-    'surprise-wa', 'surprise-yo', 'dissatisfaction-hnn',
-  ]
-
-  const DESIGN_FIELDS = [
-    { key: 'gender', label: 'Gender', empty: '— any —', options: [
-      ['male', 'Male'], ['female', 'Female'],
-    ] },
-    { key: 'age', label: 'Age', empty: '— any —', options: [
-      ['child', 'Child'], ['teenager', 'Teenager'], ['young adult', 'Young Adult'],
-      ['middle-aged', 'Middle-aged'], ['elderly', 'Elderly'],
-    ] },
-    { key: 'pitch', label: 'Pitch', empty: '— any —', options: [
-      ['very low pitch', 'Very Low'], ['low pitch', 'Low'], ['moderate pitch', 'Moderate'],
-      ['high pitch', 'High'], ['very high pitch', 'Very High'],
-    ] },
-    { key: 'style', label: 'Style', empty: '— none —', options: [
-      ['whisper', 'Whisper'],
-    ] },
-  ] as const
-
-  const ACCENTS = [
-    'American', 'British', 'Australian', 'Canadian', 'Indian',
-    'Korean', 'Japanese', 'Portuguese', 'Russian',
-  ]
-
   // ── Server / data state ──────────────────────────────────────────────
 
   type ServerStatus = 'loading' | 'ready' | 'unavailable'
@@ -46,30 +18,19 @@
 
   // ── Synthesis inputs ─────────────────────────────────────────────────
 
-  type VoiceTab = 'cloning' | 'design'
-
-  let activeTab = $state<VoiceTab>('cloning')
   let language = $state('en')
   let text = $state('')
   let speed = $state(1.0)
-
-  // Cloning tab
+  let totalSteps = $state(16)
   let selectedVoiceId = $state<string | null>(null)
-  let useCustomVoice = $state(false)
-  let customFile = $state<File | null>(null)
-  let refText = $state('')
-  let refVoiceName = $state('')
-  let fileInput: HTMLInputElement | undefined = $state()
 
-  // Design tab — field order defines the instruct string
-  let design = $state({ gender: '', age: '', pitch: '', style: '', accent: '' })
-  let instruct = $derived(Object.values(design).filter(Boolean).join(', '))
-
-  // Accents are English-only: switching to another language clears the accent,
-  // and picking an accent switches the language to English (see the select's onchange).
-  $effect(() => {
-    if (language !== 'en' && design.accent) design.accent = ''
-  })
+  // Import panel
+  let showImport = $state(false)
+  let importName = $state('')
+  let importFile = $state<File | null>(null)
+  let importFileInput: HTMLInputElement | undefined = $state()
+  let importing = $state(false)
+  let importError = $state<string | null>(null)
 
   // Output modes
   let streamMode = $state(true)
@@ -90,18 +51,15 @@
 
   // ── Derived view state ───────────────────────────────────────────────
 
-  let usingCustomAudio = $derived(activeTab === 'cloning' && useCustomVoice)
   let streaming = $derived(streamMode || llmSimMode)
   let showStop = $derived((synthesizing && streaming) || player.playing)
   let speedLabel = $derived(speed === 1.0 ? '1.0× (normal)' : `${speed.toFixed(1)}×`)
+  let stepsLabel = $derived(`${totalSteps} step${totalSteps === 1 ? '' : 's'}`)
 
   let canSynthesize = $derived(
     text.trim().length > 0 &&
-      !synthesizing &&
-      !(llmSimMode && usingCustomAudio) &&
-      (activeTab === 'design' ||
-        selectedVoiceId !== null ||
-        (useCustomVoice && customFile !== null && refText.trim().length > 0)),
+      selectedVoiceId !== null &&
+      !synthesizing,
   )
 
   // ── Lifecycle ────────────────────────────────────────────────────────
@@ -120,7 +78,6 @@
       voices = vcs
       if (vcs.length > 0 && selectedVoiceId === null) {
         selectedVoiceId = vcs[0].id
-        adoptVoiceLanguage(vcs[0].id)
       }
     } catch (e) {
       loadError = e instanceof Error ? e.message : 'Failed to load data'
@@ -136,27 +93,39 @@
 
   // ── Helpers ──────────────────────────────────────────────────────────
 
-  function adoptVoiceLanguage(id: string | null) {
-    const voice = voices.find((v) => v.id === id)
-    if (voice?.language) language = voice.language
-  }
-
   function handleVoiceDelete(id: string) {
     voices = voices.filter((v) => v.id !== id)
     if (selectedVoiceId === id) {
       selectedVoiceId = voices[0]?.id ?? null
-      adoptVoiceLanguage(selectedVoiceId)
     }
   }
 
-  function handleFileChange(e: Event) {
+  function handleImportFileChange(e: Event) {
     const input = e.target as HTMLInputElement
-    customFile = input.files?.[0] ?? null
+    const f = input.files?.[0] ?? null
+    importFile = f
+    if (f && !importName) {
+      importName = f.name.replace(/\.json$/i, '')
+    }
   }
 
-  function clearFile() {
-    customFile = null
-    if (fileInput) fileInput.value = ''
+  async function handleImport() {
+    if (!importFile || !importName.trim()) return
+    importing = true
+    importError = null
+    try {
+      const voice = await api.importVoice(importName.trim(), importFile)
+      voices = [...voices, voice]
+      selectedVoiceId = voice.id
+      showImport = false
+      importName = ''
+      importFile = null
+      if (importFileInput) importFileInput.value = ''
+    } catch (e) {
+      importError = e instanceof Error ? e.message : 'Import failed'
+    } finally {
+      importing = false
+    }
   }
 
   function synthParams() {
@@ -164,11 +133,8 @@
       text: text.trim(),
       language,
       speed: speed === 1.0 ? undefined : speed,
-      voiceId: activeTab === 'cloning' && !useCustomVoice && selectedVoiceId ? selectedVoiceId : undefined,
-      refAudio: usingCustomAudio && customFile ? customFile : undefined,
-      refText: usingCustomAudio ? refText.trim() : undefined,
-      refVoiceName: usingCustomAudio && refVoiceName.trim() ? refVoiceName.trim() : undefined,
-      instruct: activeTab === 'design' && instruct ? instruct : undefined,
+      totalSteps,
+      voiceId: selectedVoiceId!,
     }
   }
 
@@ -193,7 +159,7 @@
       language: params.language,
       voiceId: params.voiceId,
       speed: params.speed,
-      instruct: params.instruct,
+      totalSteps: params.totalSteps,
     })
     ws.binaryType = 'arraybuffer'
     activeWs = ws
@@ -268,16 +234,8 @@
       synthesizing = false
     }
 
-    // Streamed sessions: offer whatever audio arrived (even partial) for replay/download.
     if (streaming && player.hasAudio && !resultUrl) {
       resultUrl = URL.createObjectURL(player.toBlob())
-    }
-
-    // A newly saved voice should show up in the list right away.
-    if (usingCustomAudio && refVoiceName.trim()) {
-      try {
-        voices = await api.fetchVoices()
-      } catch { /* non-critical */ }
     }
   }
 
@@ -300,7 +258,7 @@
 <div class="app">
   <header class="header">
     <div class="header-inner">
-      <h1 class="logo">OmniVoice <span class="logo-sub">TTS</span></h1>
+      <h1 class="logo">Supertonic <span class="logo-sub">TTS</span></h1>
       <div
         class="status-badge"
         class:ready={serverStatus === 'ready'}
@@ -331,129 +289,72 @@
     {/if}
 
     <div class="card voice-card">
-      <div class="tab-bar">
-        <button class="tab-btn" class:active={activeTab === 'cloning'} onclick={() => activeTab = 'cloning'}>
-          Voice Cloning
-        </button>
-        <button class="tab-btn" class:active={activeTab === 'design'} onclick={() => activeTab = 'design'}>
-          Voice Design
+      <div class="voice-card-header">
+        <span class="field-label">Voice</span>
+        <button
+          class="import-toggle-btn"
+          type="button"
+          onclick={() => { showImport = !showImport; importError = null }}
+        >
+          {showImport ? '✕ Cancel' : '+ Import style'}
         </button>
       </div>
 
-      <div class="tab-panels">
-        <div class="tab-panel" class:active={activeTab === 'cloning'}>
-          {#if !useCustomVoice}
-            <div class="voice-scroll">
-              <VoiceSelect
-                {voices}
-                bind:value={selectedVoiceId}
-                onchange={adoptVoiceLanguage}
-                ondelete={handleVoiceDelete}
-              />
-              {#if voices.length === 0}
-                <p class="hint">
-                  No voice samples found. Create a directory per voice in
-                  <code>server/voices/</code> containing <code>voice.wav</code> +
-                  <code>&lt;lang&gt;.txt</code>, or set <code>VOICE_SAMPLES_DIR</code>.
-                </p>
-              {/if}
-            </div>
-            <button
-              class="use-custom-btn"
-              type="button"
-              disabled={llmSimMode}
-              onclick={() => useCustomVoice = true}
-            >+ Use custom audio</button>
-          {:else}
-            <div class="custom-voice">
-              <div class="custom-voice-header">
-                <span class="field-label">Custom audio</span>
-                <button class="back-btn" type="button" onclick={() => useCustomVoice = false}>
-                  ← Built-in voices
-                </button>
-              </div>
-              <span class="field-label">
-                Reference audio <span class="required">*</span>
-                <span class="hint-inline">(recommended length: 5–10 seconds)</span>
-              </span>
-              <div class="file-row">
-                <button class="file-btn" type="button" onclick={() => fileInput?.click()}>
-                  {customFile ? '✓ ' + customFile.name : 'Choose audio file…'}
-                </button>
-                <input
-                  bind:this={fileInput}
-                  type="file"
-                  accept="audio/*,.wav,.mp3,.flac,.ogg"
-                  style="display:none"
-                  onchange={handleFileChange}
-                />
-                {#if customFile}
-                  <button class="clear-btn" type="button" onclick={clearFile} title="Remove file">✕</button>
-                {/if}
-              </div>
-              <label class="field-label spaced" for="ref-text">
-                Reference transcript <span class="required">*</span>
-              </label>
-              <textarea
-                id="ref-text"
-                class="textarea"
-                rows="2"
-                placeholder="Type exactly what the audio says…"
-                bind:value={refText}
-              ></textarea>
-              <label class="field-label spaced" for="ref-voice-name">
-                Save as voice
-                <span class="hint-inline">(optional — letters, digits, hyphens, underscores)</span>
-              </label>
-              <input
-                id="ref-voice-name"
-                class="text-input-sm"
-                type="text"
-                placeholder="e.g. my_voice"
-                bind:value={refVoiceName}
-              />
-            </div>
-          {/if}
-        </div>
-
-        <div class="tab-panel" class:active={activeTab === 'design'}>
-          <div class="design-grid">
-            {#each DESIGN_FIELDS as field (field.key)}
-              <div class="design-field">
-                <label class="field-label" for="d-{field.key}">{field.label}</label>
-                <select id="d-{field.key}" class="design-select" bind:value={design[field.key]}>
-                  <option value="">{field.empty}</option>
-                  {#each field.options as [value, label] (value)}
-                    <option {value}>{label}</option>
-                  {/each}
-                </select>
-              </div>
-            {/each}
-            <div class="design-field design-field-full">
-              <label class="field-label" for="d-accent">
-                English Accent
-                <span class="hint-inline">(selecting one switches the language to English)</span>
-              </label>
-              <select
-                id="d-accent"
-                class="design-select"
-                bind:value={design.accent}
-                onchange={() => { if (design.accent) language = 'en' }}
-              >
-                <option value="">— any —</option>
-                {#each ACCENTS as accent (accent)}
-                  <option value="{accent.toLowerCase()} accent">{accent}</option>
-                {/each}
-              </select>
-            </div>
+      {#if showImport}
+        <div class="import-panel">
+          <span class="field-label">
+            Style JSON
+            <span class="hint-inline">(exported from Supertonic Cloud)</span>
+          </span>
+          <div class="file-row">
+            <button class="file-btn" type="button" onclick={() => importFileInput?.click()}>
+              {importFile ? '✓ ' + importFile.name : 'Choose .json file…'}
+            </button>
+            <input
+              bind:this={importFileInput}
+              type="file"
+              accept=".json,application/json"
+              style="display:none"
+              onchange={handleImportFileChange}
+            />
           </div>
-          {#if instruct}
-            <p class="instruct-preview">"{instruct}"</p>
-          {:else}
-            <p class="hint">All fields optional — leave empty to let the model decide.</p>
+          <label class="field-label spaced" for="import-name">
+            Save as <span class="required">*</span>
+            <span class="hint-inline">(letters, digits, hyphens, underscores)</span>
+          </label>
+          <div class="import-name-row">
+            <input
+              id="import-name"
+              class="text-input-sm"
+              type="text"
+              placeholder="e.g. my_voice"
+              bind:value={importName}
+            />
+            <button
+              class="import-btn"
+              type="button"
+              disabled={!importFile || !importName.trim() || importing}
+              onclick={handleImport}
+            >
+              {#if importing}<span class="btn-spinner"></span> Importing…{:else}Import{/if}
+            </button>
+          </div>
+          {#if importError}
+            <p class="import-error">✕ {importError}</p>
           {/if}
         </div>
-      </div>
+      {:else}
+        <div class="voice-scroll">
+          <VoiceSelect
+            {voices}
+            bind:value={selectedVoiceId}
+            ondelete={handleVoiceDelete}
+          />
+          {#if voices.length === 0}
+            <p class="hint">No voices loaded yet. Import a style JSON from Supertonic Cloud.</p>
+          {/if}
+        </div>
+      {/if}
     </div>
 
     <div class="card">
@@ -471,12 +372,6 @@
           bind:value={text}
         ></textarea>
       {/if}
-      <p class="expression-hint">
-        <span class="expression-hint-label">Expression tags</span>
-        {#each EXPRESSION_TAGS as tag (tag)}
-          <code class="tag-chip">[{tag}]</code>
-        {/each}
-      </p>
     </div>
 
     <div class="card settings-card">
@@ -493,16 +388,36 @@
           <input
             id="speed-range"
             type="range"
-            min="0.5"
+            min="0.7"
             max="2.0"
             step="0.1"
             bind:value={speed}
             class="range-input"
           />
           <div class="range-marks">
-            <span>0.5×</span>
+            <span>0.7×</span>
             <span>2.0×</span>
           </div>
+        </div>
+      </div>
+
+      <div class="settings-col">
+        <div class="settings-label-row">
+          <label class="field-label" for="steps-range">Quality steps</label>
+          <span class="speed-value">{stepsLabel}</span>
+        </div>
+        <input
+          id="steps-range"
+          type="range"
+          min="1"
+          max="50"
+          step="1"
+          bind:value={totalSteps}
+          class="range-input"
+        />
+        <div class="range-marks">
+          <span>1 (fastest)</span>
+          <span>50 (best)</span>
         </div>
       </div>
 
@@ -525,11 +440,10 @@
       </div>
 
       {#if streaming}
-        <label class="llm-toggle" class:disabled={usingCustomAudio}>
+        <label class="llm-toggle">
           <input
             type="checkbox"
             bind:checked={llmSimMode}
-            disabled={usingCustomAudio}
             style="display:none"
           />
           <div class="toggle-track" class:on={llmSimMode}>
@@ -629,12 +543,491 @@
     <span class="footer-sep">·</span>
     <a
       class="footer-link"
-      href="https://huggingface.co/spaces/k2-fsa/OmniVoice"
+      href="https://supertone.ai/supertonic"
       target="_blank"
       rel="noopener noreferrer"
     >
-      <span class="footer-icon footer-emoji" aria-hidden="true">🤗</span>
-      <span>OmniVoice model</span>
+      <span class="footer-icon footer-emoji" aria-hidden="true">🔊</span>
+      <span>Supertonic model</span>
     </a>
   </footer>
 </div>
+
+<style>
+  /* ── Layout ── */
+  .app {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  .main {
+    flex: 1;
+    max-width: 680px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 1.5rem 1rem 3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  /* ── Header ── */
+  .header {
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-1);
+  }
+
+  .header-inner {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    font-size: 1.125rem;
+    font-weight: 700;
+    margin: 0;
+    color: var(--text);
+  }
+
+  .logo-sub {
+    color: var(--primary);
+    font-weight: 500;
+  }
+
+  /* ── Status badge ── */
+  .status-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    padding: 0.25rem 0.625rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .status-badge.ready { color: var(--success); border-color: color-mix(in srgb, var(--success) 30%, var(--border)); }
+  .status-badge.ready .status-dot { background: var(--success); box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 20%, transparent); }
+  .status-badge.unavailable { color: var(--error); border-color: color-mix(in srgb, var(--error) 30%, var(--border)); }
+  .status-badge.unavailable .status-dot { background: var(--error); }
+  .status-badge.loading .status-dot { animation: pulse 1.2s ease-in-out infinite; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  /* ── Voice card ── */
+  .voice-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .import-toggle-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    padding: 0.2rem 0.6rem;
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s;
+  }
+
+  .import-toggle-btn:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+  }
+
+  .voice-scroll {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 260px;
+    overflow-y: auto;
+  }
+
+  /* ── Import panel ── */
+  .import-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .import-name-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .import-name-row .text-input-sm {
+    flex: 1;
+  }
+
+  .import-btn {
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 0.4rem 0.875rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+    transition: opacity 0.12s;
+  }
+
+  .import-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .import-error {
+    font-size: 0.8rem;
+    color: var(--error);
+    margin: 0;
+  }
+
+  /* ── Text area ── */
+  .text-input {
+    width: 100%;
+    resize: vertical;
+    min-height: 140px;
+  }
+
+  .sim-display {
+    font-family: inherit;
+    resize: none;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+
+  .sim-sent { color: var(--text); }
+  .sim-pending { color: var(--text-muted); }
+
+  /* ── Settings card ── */
+  .settings-card {
+    gap: 0.875rem;
+  }
+
+  .settings-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  .settings-col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .settings-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+
+  .speed-value {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+
+  .output-btn-group {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .output-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    padding: 0.45rem 0.5rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .output-btn + .output-btn { border-left: 1px solid var(--border); }
+  .output-btn.active { background: var(--primary); color: #fff; }
+  .output-btn:not(.active):hover { background: var(--surface-2); }
+
+  /* ── LLM toggle ── */
+  .llm-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .toggle-track {
+    width: 32px;
+    height: 18px;
+    border-radius: 999px;
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    position: relative;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+
+  .toggle-track.on { background: var(--primary); border-color: var(--primary); }
+
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  }
+
+  .toggle-track.on .toggle-knob { transform: translateX(14px); }
+
+  .toggle-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    font-size: 0.85rem;
+  }
+
+  /* ── Synth button ── */
+  .synth-btn {
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    transition: opacity 0.15s, background 0.15s;
+  }
+
+  .synth-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .synth-btn.stop { background: var(--error); }
+
+  .stop-label {
+    margin-left: 0.25rem;
+    font-size: 0.8rem;
+    opacity: 0.85;
+  }
+
+  /* ── Result card ── */
+  .result-card { gap: 0.5rem; }
+
+  .result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .download-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    padding: 0.2rem 0.6rem;
+    cursor: pointer;
+  }
+
+  .download-btn:hover { color: var(--text); border-color: var(--text-muted); }
+
+  .audio-player { width: 100%; }
+
+  /* ── Footer ── */
+  .footer {
+    border-top: 1px solid var(--border);
+    padding: 0.875rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+  }
+
+  .footer-link {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    transition: color 0.12s;
+  }
+
+  .footer-link:hover { color: var(--text); }
+
+  .footer-icon { width: 14px; height: 14px; }
+  .footer-emoji { font-size: 0.875rem; }
+  .footer-sep { color: var(--border); }
+
+  /* ── Shared form elements ── */
+  .field-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .hint-inline {
+    font-size: 0.72rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-muted);
+    opacity: 0.7;
+  }
+
+  .hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  .required { color: var(--error); }
+
+  .spaced { margin-top: 0.25rem; }
+
+  .textarea {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.9rem;
+    padding: 0.6rem 0.75rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.12s;
+  }
+
+  .textarea:focus { border-color: var(--primary); }
+
+  .text-input-sm {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.875rem;
+    padding: 0.4rem 0.6rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.12s;
+  }
+
+  .text-input-sm:focus { border-color: var(--primary); }
+
+  .file-btn {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.875rem;
+    padding: 0.4rem 0.75rem;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.12s;
+    flex: 1;
+  }
+
+  .file-btn:hover { border-color: var(--primary); }
+
+  .file-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .range-input {
+    width: 100%;
+    accent-color: var(--primary);
+  }
+
+  .range-marks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    margin-top: -0.1rem;
+  }
+
+  /* ── Banners ── */
+  .banner {
+    padding: 0.6rem 0.875rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+  }
+
+  .banner-warning { background: color-mix(in srgb, var(--warning) 12%, transparent); color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent); }
+  .banner-error { background: color-mix(in srgb, var(--error) 10%, transparent); color: var(--error); border: 1px solid color-mix(in srgb, var(--error) 25%, transparent); }
+
+  /* ── Spinner / animation ── */
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .btn-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255,255,255,0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  .stream-hint {
+    text-align: center;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+</style>

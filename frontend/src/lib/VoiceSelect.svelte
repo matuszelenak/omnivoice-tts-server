@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Voice } from './types.js'
-  import { deleteVoice, voicePreviewUrl } from './api.js'
+  import { deleteVoice } from './api.js'
 
   interface Props {
     voices: Voice[]
@@ -11,34 +11,15 @@
 
   let { voices, value = $bindable(null), onchange, ondelete }: Props = $props()
 
-  let playingId = $state<string | null>(null)
   let confirmingId = $state<string | null>(null)
   let deletingId = $state<string | null>(null)
   let deleteError = $state<string | null>(null)
   let confirmTimer: ReturnType<typeof setTimeout> | null = null
-  let audioEl: HTMLAudioElement | undefined = $state()
 
-  function select(id: string | null) {
+  function select(id: string) {
     value = id
     clearConfirm()
     onchange?.(id)
-  }
-
-  function togglePreview(voiceId: string) {
-    if (playingId === voiceId) {
-      audioEl?.pause()
-      playingId = null
-    } else {
-      if (audioEl) {
-        audioEl.pause()
-        audioEl.src = ''
-      }
-      audioEl = new Audio(voicePreviewUrl(voiceId))
-      audioEl.onended = () => (playingId = null)
-      audioEl.onerror = () => (playingId = null)
-      audioEl.play().catch(() => (playingId = null))
-      playingId = voiceId
-    }
   }
 
   function clearConfirm() {
@@ -62,10 +43,6 @@
     deletingId = voiceId
     try {
       await deleteVoice(voiceId)
-      if (playingId === voiceId) {
-        audioEl?.pause()
-        playingId = null
-      }
       if (value === voiceId) {
         value = null
         onchange?.(null)
@@ -80,7 +57,6 @@
 
   $effect(() => {
     return () => {
-      audioEl?.pause()
       if (confirmTimer) clearTimeout(confirmTimer)
     }
   })
@@ -90,49 +66,33 @@
   {#each voices as voice (voice.id)}
     <div class="voice-row" class:selected={value === voice.id}>
       <button class="voice-select" onclick={() => select(voice.id)} type="button">
-        <div class="voice-header">
-          <span class="voice-name">👤 {voice.name}</span>
-          {#if voice.language}
-            <span class="voice-lang">{voice.language}</span>
-          {/if}
-          <span class="voice-file">{voice.filename}</span>
-        </div>
-        {#if voice.refText}
-          <p class="voice-ref">"{voice.refText}"</p>
-        {:else}
-          <p class="voice-ref no-transcript">No transcript — Whisper will auto-transcribe on use</p>
-        {/if}
+        <span class="voice-name">{voice.name}</span>
+        <span class="voice-kind" class:custom={voice.kind === 'custom'}>
+          {voice.kind === 'custom' ? 'custom' : 'built-in'}
+        </span>
       </button>
 
-      <div class="voice-actions">
-        <button
-          class="action-btn"
-          class:playing={playingId === voice.id}
-          onclick={() => togglePreview(voice.id)}
-          type="button"
-          title={playingId === voice.id ? 'Stop preview' : 'Play preview'}
-          aria-label={playingId === voice.id ? 'Stop preview' : `Preview ${voice.name}`}
-        >
-          {playingId === voice.id ? '⏹' : '▶'}
-        </button>
-        <button
-          class="action-btn delete-btn"
-          class:confirming={confirmingId === voice.id}
-          onclick={() => requestDelete(voice.id)}
-          disabled={deletingId === voice.id}
-          type="button"
-          title={confirmingId === voice.id ? 'Click again to confirm deletion' : `Delete ${voice.name}`}
-          aria-label={confirmingId === voice.id ? 'Confirm delete' : `Delete ${voice.name}`}
-        >
-          {#if deletingId === voice.id}
-            <span class="delete-spinner"></span>
-          {:else if confirmingId === voice.id}
-            Sure?
-          {:else}
-            🗑
-          {/if}
-        </button>
-      </div>
+      {#if voice.kind === 'custom'}
+        <div class="voice-actions">
+          <button
+            class="delete-btn"
+            class:confirming={confirmingId === voice.id}
+            onclick={() => requestDelete(voice.id)}
+            disabled={deletingId === voice.id}
+            type="button"
+            title={confirmingId === voice.id ? 'Click again to confirm deletion' : `Delete ${voice.name}`}
+            aria-label={confirmingId === voice.id ? 'Confirm delete' : `Delete ${voice.name}`}
+          >
+            {#if deletingId === voice.id}
+              <span class="spinner"></span>
+            {:else if confirmingId === voice.id}
+              Sure?
+            {:else}
+              🗑
+            {/if}
+          </button>
+        </div>
+      {/if}
     </div>
   {/each}
 
@@ -148,11 +108,9 @@
     gap: 0.4rem;
   }
 
-  /* ── Voice rows ── */
   .voice-row {
     display: flex;
     align-items: stretch;
-    gap: 0;
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -172,76 +130,46 @@
   .voice-select {
     flex: 1;
     display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    padding: 0.6rem 0.875rem;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.55rem 0.875rem;
     background: none;
     border: none;
     color: var(--text);
     text-align: left;
     cursor: pointer;
-    min-width: 0;
-  }
-
-  .voice-header {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-    min-width: 0;
   }
 
   .voice-name {
     font-size: 0.875rem;
     font-weight: 600;
-    white-space: nowrap;
   }
 
-  .voice-lang {
+  .voice-kind {
     font-size: 0.68rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--primary);
-    background: color-mix(in srgb, var(--primary) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
     border-radius: 4px;
     padding: 0.05em 0.4em;
-    flex-shrink: 0;
   }
 
-  .voice-file {
-    font-size: 0.72rem;
-    color: var(--text-muted);
-    font-family: monospace;
-    white-space: nowrap;
+  .voice-kind.custom {
+    color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    border-color: color-mix(in srgb, var(--primary) 30%, transparent);
   }
 
-  .voice-ref {
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    font-style: italic;
-    margin: 0;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
-
-  .voice-ref.no-transcript {
-    color: color-mix(in srgb, var(--text-muted) 60%, transparent);
-    font-style: normal;
-  }
-
-  /* ── Action buttons ── */
   .voice-actions {
     display: flex;
-    flex-direction: column;
     border-left: 1px solid var(--border);
     flex-shrink: 0;
   }
 
-  .action-btn {
-    flex: 1;
+  .delete-btn {
     width: 42px;
     background: none;
     border: none;
@@ -255,21 +183,8 @@
     padding: 0;
   }
 
-  .action-btn:hover {
-    background: var(--surface-3);
-    color: var(--text);
-  }
-
-  .action-btn + .action-btn {
-    border-top: 1px solid var(--border);
-  }
-
-  .action-btn.playing {
-    color: var(--primary);
-    animation: pulse 1.2s ease-in-out infinite;
-  }
-
   .delete-btn:hover {
+    background: var(--surface-3);
     color: var(--error);
   }
 
@@ -285,7 +200,7 @@
     cursor: not-allowed;
   }
 
-  .delete-spinner {
+  .spinner {
     width: 12px;
     height: 12px;
     border: 2px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
@@ -298,11 +213,6 @@
     font-size: 0.8rem;
     color: var(--error);
     margin: 0;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
   }
 
   @keyframes spin {

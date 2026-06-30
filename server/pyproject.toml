@@ -1,13 +1,13 @@
 [project]
-name = "omnivoice-tts-server"
+name = "supertonic-tts-server"
 version = "0.1.0"
-description = "FastAPI server exposing OmniVoice TTS Model"
+description = "FastAPI server exposing Supertonic TTS Model"
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "blingfire>=0.1.8",
     "fastapi>=0.136.3",
     "logfire[fastapi]>=4.34.0",
-    "omnivoice>=0.1.5",
+    "supertonic @ git+https://github.com/matuszelenak/supertonic-py-cuda.git",
     "pydantic-settings>=2.0",
     "python-multipart>=0.0.20",
     "soundfile>=0.13.1",
@@ -37,5 +37,5 @@ select = [
     "C4",   # flake8-comprehensions
 ]
 ignore = [
-    "E402",  # module imports not at top — main.py silences transformers logging first
+    "E402",
 ]

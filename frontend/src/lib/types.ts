@@ -6,18 +6,13 @@ export interface Language {
 export interface Voice {
   id: string
   name: string
-  filename: string
-  refText: string | null
-  language: string | null
+  kind: 'builtin' | 'custom'
 }
 
 export interface SynthesisParams {
   text: string
   language: string
   speed?: number
-  voiceId?: string
-  refAudio?: File
-  refText?: string
-  refVoiceName?: string
-  instruct?: string
+  totalSteps?: number
+  voiceId: string
 }

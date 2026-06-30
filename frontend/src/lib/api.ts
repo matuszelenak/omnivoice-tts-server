@@ -33,8 +33,16 @@ export async function fetchVoices(): Promise<Voice[]> {
   return data.map((v) => camelizeKeys<Voice>(v))
 }
 
-export function voicePreviewUrl(voiceId: string): string {
-  return `${BASE}/v1/voices/${encodeURIComponent(voiceId)}/preview`
+export async function importVoice(name: string, file: File): Promise<Voice> {
+  const form = new FormData()
+  form.append('name', name)
+  form.append('file', file)
+  const res = await fetch(`${BASE}/v1/voices`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const detail = await res.json().then((d) => d.detail).catch(() => res.statusText)
+    throw new Error(detail)
+  }
+  return camelizeKeys(await res.json())
 }
 
 export async function deleteVoice(voiceId: string): Promise<void> {
@@ -52,16 +60,10 @@ const WS_BASE = BASE.replace(/^http/, 'ws')
 function buildSynthForm(params: SynthesisParams, stream = false): FormData {
   const form = new FormData()
   form.append('text', params.text)
+  form.append('voice_id', params.voiceId)
   form.append('language', params.language)
   if (params.speed != null && params.speed !== 1.0) form.append('speed', String(params.speed))
-  if (params.refAudio) {
-    form.append('ref_audio', params.refAudio)
-    form.append('ref_text', params.refText ?? '')
-    if (params.refVoiceName) form.append('ref_voice_name', params.refVoiceName)
-  } else if (params.voiceId) {
-    form.append('voice_id', params.voiceId)
-  }
-  if (params.instruct) form.append('instruct', params.instruct)
+  if (params.totalSteps != null) form.append('total_steps', String(params.totalSteps))
   if (stream) form.append('stream', 'true')
   return form
 }
@@ -114,15 +116,14 @@ export async function* synthesizeStream(params: SynthesisParams, signal?: AbortS
 
 export function openSynthSocket(params: {
   language: string
-  voiceId?: string
+  voiceId: string
   speed?: number
-  instruct?: string
+  totalSteps?: number
 }): WebSocket {
   const url = new URL(`${WS_BASE}/v1/ws/synthesize`)
   url.searchParams.set('language', params.language)
-  if (params.voiceId) url.searchParams.set('voice_id', params.voiceId)
+  url.searchParams.set('voice_id', params.voiceId)
   if (params.speed != null && params.speed !== 1.0) url.searchParams.set('speed', String(params.speed))
-  if (params.instruct) url.searchParams.set('instruct', params.instruct)
+  if (params.totalSteps != null) url.searchParams.set('total_steps', String(params.totalSteps))
   return new WebSocket(url.toString())
 }
-

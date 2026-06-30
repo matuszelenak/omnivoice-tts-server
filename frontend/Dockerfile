@@ -1,16 +1,17 @@
 # syntax=docker/dockerfile:1
 
 # ---- shared dependency layer ----
-FROM denoland/deno:2.8.1 AS deps
+FROM docker.io/denoland/deno:2.8.1 AS deps
 WORKDIR /app
 COPY deno.json package.json ./
 # Populates node_modules (nodeModulesDir=auto) for Vite/Svelte.
 RUN deno install
 
-# ---- dev server (used by docker compose watch) ----
+# ---- dev server ----
+# Source files are bind-mounted at runtime (see docker-compose.yml volumes),
+# so rebuilding the image is only needed when deno.json / package.json change.
 FROM deps AS dev
 WORKDIR /app
-COPY . .
 EXPOSE 5173
 CMD ["deno", "task", "dev"]
 

@@ -16,13 +16,16 @@ ENV UV_LINK_MODE=copy \
     UV_CONCURRENT_INSTALLS=8 \
     HF_HOME=/cache/hf \
     HF_HUB_CACHE=/cache/hf/hub \
-    TORCH_HOME=/cache/torch
+    SUPERTONIC_CACHE_DIR=/cache/supertonic
 
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev
+    uv sync --no-dev && \
+    find /app/.venv/lib -path "*/nvidia/*/lib" -type d \
+        | tee /etc/ld.so.conf.d/nvidia-pip-pkgs.conf \
+    && ldconfig
 
 COPY src src
 COPY main.py main.py

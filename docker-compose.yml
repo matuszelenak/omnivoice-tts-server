@@ -1,62 +1,69 @@
 services:
-  server:
-    container_name: omnivoice-tts-server
-    build:
-      context: server
-    ports:
-      - "9001:9001"
-    environment:
-      - DEVICE_MAP=${DEVICE_MAP:-cuda:0}
-      - VOICE_SAMPLES_DIR=${VOICE_SAMPLES_DIR:-/app/voices}
-      - HF_TOKEN=${HF_TOKEN}
-    volumes:
-      - ${HF_HOME:-./server/models}:/cache/hf
-      - ${HF_HOME:-./server/cache}:/cache/torch
-      - ./server/voices:${VOICE_SAMPLES_DIR:-/app/voices}
-    shm_size: "2gb"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["1"]
-              capabilities: [gpu]
-    restart: unless-stopped
-    develop:
-      watch:
-        - action: sync
-          path: ./server/main.py
-          target: /app/main.py
-        - action: sync
-          path: ./server/src
-          target: /app/src
-        - action: rebuild
-          path: ./server/pyproject.toml
+    server:
+        container_name: supertonic-tts-server
+        build:
+            context: server
+        ports:
+            - "9001:9001"
+        environment:
+            - SUPERTONIC_CACHE_DIR=${SUPERTONIC_CACHE_DIR:-/cache/supertonic}
+            - CUSTOM_STYLES_DIR=${CUSTOM_STYLES_DIR:-/app/custom_styles}
+            - HF_TOKEN=${HF_TOKEN}
+        volumes:
+            - ./server/custom_styles:${CUSTOM_STYLES_DIR:-/app/custom_styles}
+        shm_size: "2gb"
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          device_ids: ["0"]
+                          capabilities: [gpu]
+        restart: unless-stopped
+        develop:
+            watch:
+                - action: sync
+                  path: ./server/main.py
+                  target: /app/main.py
+                - action: sync
+                  path: ./server/src
+                  target: /app/src
+                - action: rebuild
+                  path: ./server/pyproject.toml
 
-  frontend:
-    build:
-      context: ./frontend
-      target: dev
-    image: omnivoice-tts-frontend
-    ports:
-      - "5173:5173"
-    environment:
-      API_PROXY_TARGET: ${API_PROXY_TARGET:-http://server:9001}
-    depends_on:
-      server:
-        condition: service_healthy
-    develop:
-      watch:
-        - action: sync
-          path: ./frontend/src
-          target: /app/src
-        - action: sync
-          path: ./frontend/index.html
-          target: /app/index.html
-        - action: sync
-          path: ./frontend/vite.config.ts
-          target: /app/vite.config.ts
-        - action: rebuild
-          path: ./frontend/package.json
-        - action: rebuild
-          path: ./frontend/deno.json
+    frontend:
+        build:
+            context: ./frontend
+            target: dev
+        image: supertonic-tts-frontend
+        ports:
+            - "5173:5173"
+        environment:
+            API_PROXY_TARGET: ${API_PROXY_TARGET:-http://server:9001}
+        volumes:
+            # Mount source directly so changes are visible without rebuilding.
+            # The anonymous volume preserves node_modules installed by the deps stage.
+            - ./frontend/src:/app/src
+            - ./frontend/index.html:/app/index.html
+            - ./frontend/vite.config.ts:/app/vite.config.ts
+            - ./frontend/svelte.config.js:/app/svelte.config.js
+            - ./frontend/tsconfig.json:/app/tsconfig.json
+            - /app/node_modules
+        # depends_on:
+        #     server:
+        #         condition: service_healthy
+        develop:
+            watch:
+                - action: sync
+                  path: ./frontend/src
+                  target: /app/src
+                - action: sync
+                  path: ./frontend/index.html
+                  target: /app/index.html
+                - action: sync
+                  path: ./frontend/vite.config.ts
+                  target: /app/vite.config.ts
+                - action: rebuild
+                  path: ./frontend/package.json
+                - action: rebuild
+                  path: ./frontend/deno.json
