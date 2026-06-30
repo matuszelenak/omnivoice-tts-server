@@ -16,7 +16,8 @@ ENV UV_LINK_MODE=copy \
     UV_CONCURRENT_INSTALLS=8 \
     HF_HOME=/cache/hf \
     HF_HUB_CACHE=/cache/hf/hub \
-    SUPERTONIC_CACHE_DIR=/cache/supertonic
+    SUPERTONIC_CACHE_DIR=/cache/supertonic \
+    SUPERTONIC_MODEL_DIR=/cache/supertonic/model
 
 WORKDIR /app
 
