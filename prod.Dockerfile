@@ -51,7 +51,10 @@ WORKDIR /app
 # as long as dependencies don't change, maximizing remote cache hits.
 COPY server/pyproject.toml server/uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev && \
+    find /app/.venv/lib -path "*/nvidia/*/lib" -type d \
+        | tee /etc/ld.so.conf.d/nvidia-pip-pkgs.conf \
+    && ldconfig
 
 COPY server/main.py ./main.py
 COPY server/src ./src
