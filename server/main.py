@@ -1,7 +1,6 @@
 import asyncio
 import io
 import json
-import logging
 import queue
 import struct
 import threading
@@ -15,6 +14,7 @@ import logfire
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from openai import AsyncOpenAI
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocketState
 from stream2sentence import generate_sentences
@@ -24,6 +24,7 @@ from src import voices as voice_store
 from src.chunker import split_to_sentences
 from src.config import settings
 from src.inference import infer
+from src.sanitize import sanitize_for_tts
 
 logfire.configure(
     service_name="supertonic-tts-server",
@@ -31,13 +32,12 @@ logfire.configure(
     scrubbing=False,
 )
 
-# Fewer diffusion steps on the first sentence of a stream trades a little
-# quality for a faster first audio chunk.
 TOTAL_STEPS = 16
 
 _executor = ThreadPoolExecutor(max_workers=1)
 _model: TTS | None = None
 _custom_styles_dir: Path = Path()
+_sanitize_client: AsyncOpenAI | None = None
 
 
 def _resolve_custom_styles_dir() -> Path:
@@ -48,13 +48,30 @@ def _resolve_custom_styles_dir() -> Path:
     return get_cache_dir("supertonic-3") / "custom_styles"
 
 
+async def _sanitize(text: str) -> str:
+    """Sanitize text for TTS; no-op when the sanitize LLM is not configured."""
+    if _sanitize_client is None:
+        return text
+    return await sanitize_for_tts(text, _sanitize_client, settings.sanitize_llm_model)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global _model, _custom_styles_dir
+    global _model, _custom_styles_dir, _sanitize_client
     model_dir = settings.supertonic_model_dir or None
     _model = TTS(model_dir=model_dir, auto_download=True)
     _custom_styles_dir = _resolve_custom_styles_dir()
     _custom_styles_dir.mkdir(parents=True, exist_ok=True)
+
+    if settings.sanitize_llm_base_url:
+        _sanitize_client = AsyncOpenAI(
+            base_url=settings.sanitize_llm_base_url,
+            api_key=settings.sanitize_llm_api_key or "none",
+        )
+        logfire.info("text sanitization enabled via {url}", url=settings.sanitize_llm_base_url)
+    else:
+        logfire.info("text sanitization disabled (SANITIZE_LLM_BASE_URL not set)")
+
     loop = asyncio.get_running_loop()
     style = _model.get_voice_style(_model.voice_style_names[0])
     try:
@@ -116,7 +133,8 @@ async def synthesize(
     synth = partial(infer, _model, language=language, speed=speed, voice_style=voice_style, total_steps=total_steps)
 
     if not stream:
-        data = await loop.run_in_executor(_executor, partial(synth, text))
+        clean = await _sanitize(text)
+        data = await loop.run_in_executor(_executor, partial(synth, clean))
         return StreamingResponse(
             io.BytesIO(data),
             media_type="audio/wav",
@@ -127,7 +145,8 @@ async def synthesize(
 
     async def generate():
         for sentence in sentences:
-            data = await loop.run_in_executor(_executor, partial(synth, sentence))
+            clean = await _sanitize(sentence)
+            data = await loop.run_in_executor(_executor, partial(synth, clean))
             yield struct.pack(">I", len(data)) + data
 
     return StreamingResponse(generate(), media_type="application/octet-stream")
@@ -174,14 +193,13 @@ async def ws_synthesize(
             yield chunk
 
     def _process():
-        sentence_idx = 0
         try:
             for sentence in generate_sentences(_text_gen()):
                 sentence = sentence.strip()
                 if not sentence:
                     continue
-                sentence_idx += 1
-                audio = _executor.submit(partial(synth, sentence)).result()
+                clean = asyncio.run_coroutine_threadsafe(_sanitize(sentence), loop).result()
+                audio = _executor.submit(partial(synth, clean)).result()
                 asyncio.run_coroutine_threadsafe(audio_q.put(audio), loop).result()
         except Exception as exc:
             logfire.warning("ws synthesis aborted: {exc}", exc=exc)
@@ -238,7 +256,7 @@ async def import_voice(
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
+        raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}") from e
     return voice_store.import_voice(name, payload, _model, _custom_styles_dir)
 
 

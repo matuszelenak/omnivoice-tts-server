@@ -20,5 +20,11 @@ class Settings(BaseSettings):
     # The production image sets this to the baked-in build (e.g. /app/static).
     static_dir: str = ""
 
+    # LLM-based text sanitization (OpenAI-compatible endpoint).
+    # Leave sanitize_llm_base_url empty to disable sanitization entirely.
+    sanitize_llm_base_url: str = ""
+    sanitize_llm_api_key: str = "none"
+    sanitize_llm_model: str = "gpt-4o-mini"
+
 
 settings = Settings()
