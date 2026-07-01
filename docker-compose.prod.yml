@@ -1,25 +1,27 @@
 services:
-  server:
-    container_name: supertonic-tts-server
-    build:
-      context: .
-      dockerfile: prod.Dockerfile
-    ports:
-      - "9001:9001"
-    environment:
-      - SUPERTONIC_CACHE_DIR=${SUPERTONIC_CACHE_DIR:-/cache/supertonic}
-      - CUSTOM_STYLES_DIR=${CUSTOM_STYLES_DIR:-/app/custom_styles}
-      - HF_TOKEN=${HF_TOKEN}
-    volumes:
-      - ${HF_HOME:-./server/models}:/cache/hf
-      - ${SUPERTONIC_CACHE_DIR:-./server/models}:/cache/supertonic
-      - ./server/custom_styles:${CUSTOM_STYLES_DIR:-/app/custom_styles}
-    shm_size: "2gb"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["0"]
-              capabilities: [gpu]
-    restart: unless-stopped
+    server:
+        container_name: supertonic-tts-server
+        build:
+            context: .
+            dockerfile: prod.Dockerfile
+        ports:
+            - "9001:9001"
+        env_file:
+            - .env
+        environment:
+            - SUPERTONIC_CACHE_DIR=${SUPERTONIC_CACHE_DIR:-/cache/supertonic}
+            - CUSTOM_STYLES_DIR=${CUSTOM_STYLES_DIR:-/app/custom_styles}
+            - HF_TOKEN=${HF_TOKEN}- -
+        volumes:
+            - ${HF_HOME:-./server/models}:/cache/hf
+            - ${SUPERTONIC_CACHE_DIR:-./server/models}:/cache/supertonic
+            - ./server/custom_styles:${CUSTOM_STYLES_DIR:-/app/custom_styles}
+        shm_size: "2gb"
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          device_ids: ["0"]
+                          capabilities: [gpu]
+        restart: unless-stopped
