@@ -20,4 +20,5 @@ export interface SynthesisParams {
   refText?: string
   refVoiceName?: string
   instruct?: string
+  sanitize?: boolean
 }

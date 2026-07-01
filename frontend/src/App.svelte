@@ -75,6 +75,7 @@
   let streamMode = $state(true)
   let llmSimMode = $state(false)
   let tokensPerSecond = $state(30)
+  let sanitize = $state(true)
 
   // ── Synthesis session state ──────────────────────────────────────────
 
@@ -169,6 +170,7 @@
       refText: usingCustomAudio ? refText.trim() : undefined,
       refVoiceName: usingCustomAudio && refVoiceName.trim() ? refVoiceName.trim() : undefined,
       instruct: activeTab === 'design' && instruct ? instruct : undefined,
+      sanitize,
     }
   }
 
@@ -194,6 +196,7 @@
       voiceId: params.voiceId,
       speed: params.speed,
       instruct: params.instruct,
+      sanitize: params.sanitize,
     })
     ws.binaryType = 'arraybuffer'
     activeWs = ws
@@ -505,6 +508,18 @@
           </div>
         </div>
       </div>
+
+      <div class="settings-col">
+      <label class="llm-toggle">
+        <input type="checkbox" bind:checked={sanitize} style="display:none" />
+        <div class="toggle-track" class:on={sanitize}>
+          <div class="toggle-knob"></div>
+        </div>
+        <div class="toggle-text">
+          <span>Sanitize text</span>
+          <span class="hint-inline">normalize numbers, symbols &amp; abbreviations via LLM</span>
+        </div>
+      </label>
 
       <div class="settings-col">
         <span class="field-label">Output mode</span>

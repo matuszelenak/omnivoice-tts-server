@@ -62,6 +62,7 @@ function buildSynthForm(params: SynthesisParams, stream = false): FormData {
     form.append('voice_id', params.voiceId)
   }
   if (params.instruct) form.append('instruct', params.instruct)
+  if (params.sanitize != null) form.append('sanitize', String(params.sanitize))
   if (stream) form.append('stream', 'true')
   return form
 }
@@ -117,12 +118,14 @@ export function openSynthSocket(params: {
   voiceId?: string
   speed?: number
   instruct?: string
+  sanitize?: boolean
 }): WebSocket {
   const url = new URL(`${WS_BASE}/v1/ws/synthesize`)
   url.searchParams.set('language', params.language)
   if (params.voiceId) url.searchParams.set('voice_id', params.voiceId)
   if (params.speed != null && params.speed !== 1.0) url.searchParams.set('speed', String(params.speed))
   if (params.instruct) url.searchParams.set('instruct', params.instruct)
+  if (params.sanitize != null) url.searchParams.set('sanitize', String(params.sanitize))
   return new WebSocket(url.toString())
 }
 

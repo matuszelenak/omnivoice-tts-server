@@ -55,9 +55,9 @@ _model: OmniVoice | None = None
 _sanitize_client: AsyncOpenAI | None = None
 
 
-async def _sanitize(text: str) -> str:
-    """Sanitize text for TTS; no-op when the sanitize LLM is not configured."""
-    if _sanitize_client is None:
+async def _sanitize(text: str, enabled: bool = True) -> str:
+    """Sanitize text for TTS; no-op when disabled or the sanitize LLM is not configured."""
+    if not enabled or _sanitize_client is None:
         return text
     return await sanitize_for_tts(text, _sanitize_client, settings.sanitize_llm_model)
 
@@ -172,6 +172,7 @@ async def synthesize(
     voice_id: Annotated[str | None, Form()] = None,
     ref_voice_name: Annotated[str | None, Form()] = None,
     instruct: Annotated[str | None, Form()] = None,
+    sanitize: Annotated[bool, Form()] = True,
     stream: Annotated[bool, Form()] = False,
 ) -> StreamingResponse:
     if _model is None:
@@ -213,7 +214,7 @@ async def synthesize(
 
     if not stream:
         try:
-            clean = await _sanitize(text)
+            clean = await _sanitize(text, sanitize)
             data = await loop.run_in_executor(_executor, partial(synth, clean))
         finally:
             _unlink_quietly(tmp_path)
@@ -228,7 +229,7 @@ async def synthesize(
     async def generate():
         try:
             for i, sentence in enumerate(sentences):
-                clean = await _sanitize(sentence)
+                clean = await _sanitize(sentence, sanitize)
                 num_step = NUM_STEPS_FIRST_SENTENCE if i == 0 else NUM_STEPS
                 data = await loop.run_in_executor(_executor, partial(synth, clean, num_step=num_step))
                 yield struct.pack(">I", len(data)) + data
@@ -245,6 +246,7 @@ async def ws_synthesize(
     voice_id: str | None = None,
     speed: float | None = None,
     instruct: str | None = None,
+    sanitize: bool = True,
 ) -> None:
     await ws.accept()
 
@@ -296,7 +298,7 @@ async def ws_synthesize(
                 sentence = sentence.strip()
                 if not sentence:
                     continue
-                clean = asyncio.run_coroutine_threadsafe(_sanitize(sentence), loop).result()
+                clean = asyncio.run_coroutine_threadsafe(_sanitize(sentence, sanitize), loop).result()
                 audio = _executor.submit(partial(synth, clean)).result()
                 asyncio.run_coroutine_threadsafe(audio_q.put(audio), loop).result()
         except Exception as exc:
