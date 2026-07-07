@@ -18,5 +18,11 @@ class Settings(BaseSettings):
     static_dir: str = ""
     voice_samples_dir: Path = ""
 
+    # LLM-based text sanitization (OpenAI-compatible endpoint).
+    # Leave sanitize_llm_base_url empty to disable sanitization entirely.
+    sanitize_llm_base_url: str = ""
+    sanitize_llm_api_key: str = "none"
+    sanitize_llm_model: str = "gpt-4o-mini"
+
 
 settings = Settings()

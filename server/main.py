@@ -31,10 +31,13 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocketState
 from stream2sentence import generate_sentences
 
+from openai import AsyncOpenAI
+
 from src import voices as voice_store
 from src.chunker import split_to_sentences
 from src.config import settings
 from src.inference import infer
+from src.sanitize import sanitize_for_tts
 
 logfire.configure(
     service_name="omnivoice-tts-server",
@@ -49,11 +52,19 @@ NUM_STEPS = 32
 
 _executor = ThreadPoolExecutor(max_workers=1)
 _model: OmniVoice | None = None
+_sanitize_client: AsyncOpenAI | None = None
+
+
+async def _sanitize(text: str) -> str:
+    """Sanitize text for TTS; no-op when the sanitize LLM is not configured."""
+    if _sanitize_client is None:
+        return text
+    return await sanitize_for_tts(text, _sanitize_client, settings.sanitize_llm_model)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global _model
+    global _model, _sanitize_client
     _model = OmniVoice.from_pretrained(
         "k2-fsa/OmniVoice",
         device_map=settings.device_map,
@@ -65,6 +76,16 @@ async def lifespan(_app: FastAPI):
         logfire.info("model warm-up complete")
     except Exception as exc:
         logfire.warning("model warm-up failed: {exc}", exc=exc)
+
+    if settings.sanitize_llm_base_url:
+        _sanitize_client = AsyncOpenAI(
+            base_url=settings.sanitize_llm_base_url,
+            api_key=settings.sanitize_llm_api_key or "none",
+        )
+        logfire.info("text sanitization enabled via {url}", url=settings.sanitize_llm_base_url)
+    else:
+        logfire.info("text sanitization disabled (SANITIZE_LLM_BASE_URL not set)")
+
     yield
     _executor.shutdown(wait=False)
 
@@ -192,7 +213,8 @@ async def synthesize(
 
     if not stream:
         try:
-            data = await loop.run_in_executor(_executor, partial(synth, text))
+            clean = await _sanitize(text)
+            data = await loop.run_in_executor(_executor, partial(synth, clean))
         finally:
             _unlink_quietly(tmp_path)
         return StreamingResponse(
@@ -206,8 +228,9 @@ async def synthesize(
     async def generate():
         try:
             for i, sentence in enumerate(sentences):
+                clean = await _sanitize(sentence)
                 num_step = NUM_STEPS_FIRST_SENTENCE if i == 0 else NUM_STEPS
-                data = await loop.run_in_executor(_executor, partial(synth, sentence, num_step=num_step))
+                data = await loop.run_in_executor(_executor, partial(synth, clean, num_step=num_step))
                 yield struct.pack(">I", len(data)) + data
         finally:
             _unlink_quietly(tmp_path)
@@ -268,15 +291,13 @@ async def ws_synthesize(
             yield chunk
 
     def _process():
-        sentence_idx = 0
         try:
             for sentence in generate_sentences(_text_gen()):
                 sentence = sentence.strip()
                 if not sentence:
                     continue
-                num_step = NUM_STEPS_FIRST_SENTENCE if sentence_idx == 0 else NUM_STEPS
-                sentence_idx += 1
-                audio = _executor.submit(partial(synth, sentence, num_step=num_step)).result()
+                clean = asyncio.run_coroutine_threadsafe(_sanitize(sentence), loop).result()
+                audio = _executor.submit(partial(synth, clean)).result()
                 asyncio.run_coroutine_threadsafe(audio_q.put(audio), loop).result()
         except Exception as exc:
             logfire.warning("ws synthesis aborted: {exc}", exc=exc)
