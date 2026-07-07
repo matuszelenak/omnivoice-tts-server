@@ -6,9 +6,9 @@ services:
       dockerfile: prod.Dockerfile
     ports:
       - "9001:9001"
+    env_file:
+      - .env
     environment:
-      - DEVICE_MAP=${DEVICE_MAP:-cuda:0}
-      - VOICE_SAMPLES_DIR=${VOICE_SAMPLES_DIR:-/app/voices}
       - HF_TOKEN=${HF_TOKEN}
     volumes:
       - ${HF_HOME:-./server/models}:/cache/hf
