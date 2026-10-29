@@ -1,6 +1,6 @@
 [project]
 name = "omnivoice-tts-server"
-version = "1.0.0"
+version = "0.1.0"
 description = "Production text-to-speech server for the OmniVoice model"
 requires-python = ">=3.10,<3.13"
 dependencies = [
@@ -56,3 +56,6 @@ ignore = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# `uv run pytest` (CI) does not put the working directory on sys.path the way
+# `python -m pytest` does, so make the `app` package importable explicitly.
+pythonpath = ["."]
