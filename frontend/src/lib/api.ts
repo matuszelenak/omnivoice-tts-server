@@ -16,10 +16,44 @@ function camelizeKeys<T>(obj: Record<string, unknown>): T {
 
 // ── Health / metadata ────────────────────────────────────────────────────
 
-export async function checkHealth(): Promise<{ status: string; modelLoaded: boolean }> {
+/** The parts of `/health` the UI actually shows. */
+export interface ServerHealth {
+  status: string
+  modelLoaded: boolean
+  /** Model id advertised by the server (`served_model`). */
+  model: string
+  device: string | null
+  dtype: string | null
+  voiceCount: number
+  pendingChunks: number
+  activeSessions: number
+  streamLimit: number
+  asrUrl: string | null
+  asrAvailable: boolean
+}
+
+/**
+ * Fetch `/health` and flatten it into the fields the header shows. Throws when
+ * the server cannot be reached, so the UI can report an offline backend instead
+ * of pretending everything is fine.
+ */
+export async function checkHealth(): Promise<ServerHealth> {
   const res = await fetch(`${BASE}/health`)
-  if (!res.ok) throw new Error('Server unreachable')
-  return camelizeKeys(await res.json())
+  if (!res.ok) throw new Error(`health check failed (${res.status})`)
+  const body = await res.json()
+  return {
+    status: String(body.status ?? ''),
+    modelLoaded: Boolean(body.model_loaded ?? body.ready),
+    model: String(body.served_model || body.model || 'OmniVoice'),
+    device: body.engine?.device ?? null,
+    dtype: body.engine?.dtype ?? null,
+    voiceCount: Number(body.voices?.count ?? 0),
+    pendingChunks: Number(body.scheduler?.pending_chunks ?? 0),
+    activeSessions: Number(body.stream_sessions?.active ?? 0),
+    streamLimit: Number(body.stream_sessions?.limit ?? 0),
+    asrUrl: body.asr?.url ?? null,
+    asrAvailable: Boolean(body.asr?.available),
+  }
 }
 
 export async function fetchLanguages(): Promise<Language[]> {
@@ -91,10 +125,6 @@ function buildSpeechRequest(params: SynthesisParams, opts?: { streamFormat?: 'au
     req.voice = params.voiceId
   } else if (params.instruct) {
     req.instructions = params.instruct
-  }
-
-  if (params.sanitize != null) {
-    req.sanitize = params.sanitize
   }
 
   return req
@@ -189,13 +219,11 @@ export function openSynthSocket(params: {
   voiceId?: string
   speed?: number
   instruct?: string
-  sanitize?: boolean
 }): WebSocket {
   const url = new URL(`${WS_BASE}/v1/ws/synthesize`)
   url.searchParams.set('language', params.language)
   if (params.voiceId) url.searchParams.set('voice_id', params.voiceId)
   if (params.speed != null && params.speed !== 1.0) url.searchParams.set('speed', String(params.speed))
   if (params.instruct) url.searchParams.set('instruct', params.instruct)
-  if (params.sanitize != null) url.searchParams.set('sanitize', String(params.sanitize))
   return new WebSocket(url.toString())
 }

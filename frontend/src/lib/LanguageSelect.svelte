@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte'
   import type { Language } from './types.js'
 
   interface Props {
@@ -78,11 +79,12 @@
     aria-expanded={open}
     aria-controls="lang-listbox"
   />
-  <span class="select-arrow" aria-hidden="true">▾</span>
+  <span class="select-arrow" aria-hidden="true"><Icon name="chevron" size={14} /></span>
   {#if open && filtered.length > 0}
     <div id="lang-listbox" class="dropdown" role="listbox">
       {#each filtered as lang (lang.id)}
         <button
+          type="button"
           class="dropdown-item"
           class:active={lang.id === value}
           role="option"
@@ -93,7 +95,7 @@
           }}
         >
           <span class="lang-name">{lang.name}</span>
-          <span class="lang-code">{lang.id}</span>
+          <span class="lang-code mono">{lang.id}</span>
         </button>
       {/each}
     </div>
@@ -107,76 +109,78 @@
 
   .select-input {
     width: 100%;
-    padding: 0.6rem 2.5rem 0.6rem 0.875rem;
+    padding: 0.5rem 2rem 0.5rem 0.7rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
     background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
     color: var(--text);
-    font-size: 0.9rem;
-    box-sizing: border-box;
+    font-size: 0.86rem;
     cursor: pointer;
-    transition: border-color 0.15s;
+    transition: border-color 0.15s ease;
   }
-
+  .select-input:hover {
+    border-color: var(--line-strong);
+  }
   .select-input:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: rgba(139, 155, 255, 0.55);
     cursor: text;
+  }
+  .select-input::placeholder {
+    color: var(--text-faint);
   }
 
   .select-arrow {
     position: absolute;
-    right: 0.75rem;
     top: 50%;
+    right: 0.65rem;
+    display: grid;
+    place-items: center;
     transform: translateY(-50%);
-    color: var(--text-muted);
+    color: var(--text-faint);
     pointer-events: none;
-    font-size: 0.8rem;
   }
 
   .dropdown {
     position: absolute;
     top: calc(100% + 4px);
-    left: 0;
     right: 0;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    max-height: 260px;
-    overflow-y: auto;
+    left: 0;
     z-index: 100;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    max-height: 16rem;
+    overflow-y: auto;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
   }
 
   .dropdown-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 0.5rem;
     width: 100%;
-    padding: 0.5rem 0.875rem;
-    background: none;
+    padding: 0.45rem 0.7rem;
     border: none;
-    color: var(--text);
-    font-size: 0.875rem;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 0.84rem;
     text-align: left;
-    cursor: pointer;
-    transition: background 0.1s;
+    transition: background 0.1s ease, color 0.1s ease;
   }
-
   .dropdown-item:hover,
   .dropdown-item.active {
     background: var(--surface-3);
+    color: var(--text);
   }
-
   .dropdown-item.active .lang-name {
-    color: var(--primary);
+    color: var(--accent-strong);
   }
 
   .lang-code {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    font-family: monospace;
-    margin-left: 0.5rem;
     flex-shrink: 0;
+    font-size: 0.7rem;
+    color: var(--text-faint);
   }
 </style>

@@ -21,7 +21,6 @@ export interface SpeechRequest {
   instructions?: string
   // Extensions (not part of OpenAI schema):
   language?: string
-  sanitize?: boolean
   stream_format?: 'audio' | 'sse'
 }
 
@@ -35,5 +34,4 @@ export interface SynthesisParams {
   refText?: string
   refVoiceName?: string
   instruct?: string
-  sanitize?: boolean
 }
