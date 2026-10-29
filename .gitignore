@@ -2,6 +2,10 @@
 .venv/
 __pycache__/
 *.pyc
+.ruff_cache/
+.pytest_cache/
+server/models/
+server/cache/
 
 # Node / Deno
 node_modules/
@@ -15,6 +19,8 @@ deno.lock
 .idea/
 .vscode/
 
-# Audio scratch
+# Audio scratch — except the prepared demo voices, which make the repo usable
+# (and reproducible for the benchmarks) out of the box.
 *.wav
+!server/voices/*/voice.wav
 .idea

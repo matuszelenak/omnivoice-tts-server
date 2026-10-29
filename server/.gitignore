@@ -8,6 +8,11 @@ wheels/
 
 # Virtual environments
 .venv
-voices/*
 models
 cache
+
+# Voice catalogue: deployment data. The prepared demo voices are committed from
+# the repository root (.gitignore re-includes server/voices/*/voice.wav); raw
+# uploads and original clips stay out of git.
+voices/*/source.*
+voices/*/meta.json
