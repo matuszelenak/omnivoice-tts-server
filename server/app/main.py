@@ -222,7 +222,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="OmniVoice TTS Server",
-    version="1.0.0",
+    version="0.1.0",
     description="OpenAI-compatible text-to-speech on OmniVoice (voice cloning, voice design, streaming)",
     lifespan=lifespan,
 )
