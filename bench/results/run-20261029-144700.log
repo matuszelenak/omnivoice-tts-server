@@ -1,0 +1,219 @@
+
+[1mhealth[0m
+{"status":"ok","model_loaded":true,"ready":true,"model":"k2-fsa/OmniVoice","served_model":"omnivoice","engine":{"device":"cuda:0","dtype":"bfloat16","model":"k2-fsa/OmniVoice","sample_rate":24000,"load_seconds":1.11,"prompts_cached":3,"gpu_memory_allocated_mb":1945.3,"gpu_memory_reserved_mb":6430.0},"scheduler":{"sessions":0,"pending_chunks":0,"pending_audio_seconds":0.0,"inflight":0,"capacity_chunks":48,"capacity_audio_seconds":180.0,"uptime_seconds":125.9},"voices":{"count":3},"asr":{"url":"http://host.docker.internal:9000","available":true},"stream_sessions":{"active":0,"limit":64},"config":{"num_steps":16,"first_chunk_steps":12,"encode_workers":8,"guidance_scale":2.0,"max_input_chars":4000,"max_chunk_chars":320}}
+[1msingle-request latency vs num_step (full, 8 requests)[0m
+--- full-c1-steps8: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 1 --requests 8 --corpus en --num-step 8
+
+mode=full concurrency=1 corpus=en requests=8 wall=1.2s
+throughput:   6.78 req/s     30.8 audio-s/s   RTF= 30.8x
+latency  p50=  0.15s p90=  0.16s p99=  0.16s max=  0.16s
+first chunk p50=  0.15s p90=  0.16s p99=  0.16s max=  0.16s
+audio per request: mean= 4.54s
+--- full-c1-steps12: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 1 --requests 8 --corpus en --num-step 12
+
+mode=full concurrency=1 corpus=en requests=8 wall=1.7s
+throughput:   4.75 req/s     20.7 audio-s/s   RTF= 20.7x
+latency  p50=  0.21s p90=  0.22s p99=  0.23s max=  0.23s
+first chunk p50=  0.21s p90=  0.22s p99=  0.23s max=  0.23s
+audio per request: mean= 4.36s
+--- full-c1-steps16: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 1 --requests 8 --corpus en --num-step 16
+
+mode=full concurrency=1 corpus=en requests=8 wall=2.2s
+throughput:   3.64 req/s     16.3 audio-s/s   RTF= 16.3x
+latency  p50=  0.28s p90=  0.29s p99=  0.30s max=  0.30s
+first chunk p50=  0.28s p90=  0.29s p99=  0.30s max=  0.30s
+audio per request: mean= 4.46s
+--- full-c1-steps24: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 1 --requests 8 --corpus en --num-step 24
+
+mode=full concurrency=1 corpus=en requests=8 wall=3.2s
+throughput:   2.49 req/s     11.4 audio-s/s   RTF= 11.4x
+latency  p50=  0.40s p90=  0.42s p99=  0.44s max=  0.44s
+first chunk p50=  0.40s p90=  0.42s p99=  0.44s max=  0.44s
+audio per request: mean= 4.56s
+--- full-c1-steps32: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 1 --requests 8 --corpus en --num-step 32
+
+mode=full concurrency=1 corpus=en requests=8 wall=4.2s
+throughput:   1.89 req/s      7.6 audio-s/s   RTF=  7.6x
+latency  p50=  0.53s p90=  0.55s p99=  0.58s max=  0.58s
+first chunk p50=  0.53s p90=  0.55s p99=  0.58s max=  0.58s
+audio per request: mean= 4.02s
+
+[1mconcurrency sweep, non-streaming (short sentences)[0m
+--- full-c1: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 1 --requests 6 --corpus en
+
+mode=full concurrency=1 corpus=en requests=6 wall=1.7s
+throughput:   3.62 req/s     15.6 audio-s/s   RTF= 15.6x
+latency  p50=  0.27s p90=  0.29s p99=  0.30s max=  0.30s
+first chunk p50=  0.27s p90=  0.29s p99=  0.30s max=  0.30s
+audio per request: mean= 4.33s
+--- full-c2: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 2 --requests 12 --corpus en
+
+mode=full concurrency=2 corpus=en requests=12 wall=3.4s
+throughput:   3.56 req/s     18.1 audio-s/s   RTF=  9.5x
+latency  p50=  0.57s p90=  0.60s p99=  0.60s max=  0.60s
+first chunk p50=  0.57s p90=  0.60s p99=  0.60s max=  0.60s
+audio per request: mean= 5.08s
+--- full-c4: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 4 --requests 24 --corpus en
+
+mode=full concurrency=4 corpus=en requests=24 wall=6.6s
+throughput:   3.64 req/s     16.4 audio-s/s   RTF=  4.4x
+latency  p50=  1.09s p90=  1.13s p99=  1.15s max=  1.15s
+first chunk p50=  1.09s p90=  1.13s p99=  1.15s max=  1.15s
+audio per request: mean= 4.50s
+--- full-c8: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 8 --requests 48 --corpus en
+
+mode=full concurrency=8 corpus=en requests=48 wall=13.1s
+throughput:   3.66 req/s     16.4 audio-s/s   RTF=  2.2x
+latency  p50=  2.17s p90=  2.18s p99=  2.24s max=  2.24s
+first chunk p50=  2.17s p90=  2.18s p99=  2.24s max=  2.24s
+audio per request: mean= 4.49s
+--- full-c16: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 16 --requests 96 --corpus en
+
+mode=full concurrency=16 corpus=en requests=96 wall=25.3s
+throughput:   3.79 req/s     15.0 audio-s/s   RTF=  1.0x
+latency  p50=  4.17s p90=  4.27s p99=  4.46s max=  4.48s
+first chunk p50=  4.17s p90=  4.27s p99=  4.46s max=  4.48s
+audio per request: mean= 3.95s
+
+[1mconcurrency sweep, SSE streaming[0m
+--- sse-c1: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode sse --concurrency 1 --requests 6 --corpus en
+
+mode=sse concurrency=1 corpus=en requests=6 wall=1.3s
+throughput:   4.65 req/s     20.1 audio-s/s   RTF= 20.1x
+latency  p50=  0.21s p90=  0.23s p99=  0.23s max=  0.23s
+first chunk p50=  0.21s p90=  0.23s p99=  0.23s max=  0.23s
+audio per request: mean= 4.31s
+--- sse-c2: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode sse --concurrency 2 --requests 12 --corpus en
+
+mode=sse concurrency=2 corpus=en requests=12 wall=2.6s
+throughput:   4.61 req/s     23.2 audio-s/s   RTF= 12.1x
+latency  p50=  0.44s p90=  0.46s p99=  0.47s max=  0.47s
+first chunk p50=  0.44s p90=  0.46s p99=  0.46s max=  0.46s
+audio per request: mean= 5.03s
+--- sse-c4: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode sse --concurrency 4 --requests 24 --corpus en
+
+mode=sse concurrency=4 corpus=en requests=24 wall=5.0s
+throughput:   4.84 req/s     20.2 audio-s/s   RTF=  5.4x
+latency  p50=  0.83s p90=  0.86s p99=  1.45s max=  1.45s
+first chunk p50=  0.83s p90=  0.86s p99=  1.45s max=  1.45s
+audio per request: mean= 4.18s
+--- sse-c8: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode sse --concurrency 8 --requests 48 --corpus en
+
+mode=sse concurrency=8 corpus=en requests=48 wall=10.0s
+throughput:   4.78 req/s     21.1 audio-s/s   RTF=  2.8x
+latency  p50=  1.66s p90=  1.68s p99=  1.73s max=  1.73s
+first chunk p50=  1.66s p90=  1.68s p99=  1.73s max=  1.73s
+audio per request: mean= 4.42s
+--- sse-c16: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode sse --concurrency 16 --requests 96 --corpus en
+
+mode=sse concurrency=16 corpus=en requests=96 wall=20.1s
+throughput:   4.78 req/s     21.4 audio-s/s   RTF=  1.4x
+latency  p50=  3.31s p90=  3.35s p99=  3.99s max=  4.05s
+first chunk p50=  3.31s p90=  3.35s p99=  3.99s max=  4.04s
+audio per request: mean= 4.47s
+
+[1mWebSocket, LLM-style token input (8 words/s)[0m
+--- ws-c1: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode ws --concurrency 1 --requests 3 --corpus en --token-words 1 --token-delay 0.125
+
+mode=ws concurrency=1 corpus=en requests=3 wall=4.3s
+throughput:   0.71 req/s      2.8 audio-s/s   RTF=  2.8x
+latency  p50=  1.33s p90=  1.71s p99=  1.71s max=  1.71s
+first chunk p50=  1.33s p90=  1.34s p99=  1.34s max=  1.34s
+audio per request: mean= 4.03s
+--- ws-c4: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode ws --concurrency 4 --requests 12 --corpus en --token-words 1 --token-delay 0.125
+
+mode=ws concurrency=4 corpus=en requests=12 wall=4.8s
+throughput:   2.50 req/s     10.4 audio-s/s   RTF=  2.9x
+latency  p50=  1.34s p90=  1.84s p99=  2.04s max=  2.04s
+first chunk p50=  1.34s p90=  1.63s p99=  1.84s max=  1.84s
+audio per request: mean= 4.18s
+--- ws-c8: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode ws --concurrency 8 --requests 24 --corpus en --token-words 1 --token-delay 0.125
+
+mode=ws concurrency=8 corpus=en requests=24 wall=6.5s
+throughput:   3.69 req/s     15.4 audio-s/s   RTF=  2.2x
+latency  p50=  1.82s p90=  2.66s p99=  3.50s max=  3.50s
+first chunk p50=  1.82s p90=  2.24s p99=  2.87s max=  2.87s
+audio per request: mean= 4.17s
+
+[1mSlovak[0m
+--- sk-full-c1: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 1 --requests 6 --corpus sk --lang sk --voice kroner
+
+mode=full concurrency=1 corpus=sk requests=6 wall=2.4s
+throughput:   2.51 req/s     11.6 audio-s/s   RTF= 11.6x
+latency  p50=  0.39s p90=  0.42s p99=  0.43s max=  0.43s
+first chunk p50=  0.39s p90=  0.42s p99=  0.43s max=  0.43s
+audio per request: mean= 4.61s
+--- sk-sse-c1: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode sse --concurrency 1 --requests 6 --corpus sk --lang sk --voice kroner
+
+mode=sse concurrency=1 corpus=sk requests=6 wall=1.8s
+throughput:   3.34 req/s     15.8 audio-s/s   RTF= 15.8x
+latency  p50=  0.30s p90=  0.32s p99=  0.32s max=  0.32s
+first chunk p50=  0.29s p90=  0.32s p99=  0.32s max=  0.32s
+audio per request: mean= 4.72s
+--- sk-full-c4: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 4 --requests 24 --corpus sk --lang sk --voice kroner
+
+mode=full concurrency=4 corpus=sk requests=24 wall=8.6s
+throughput:   2.78 req/s     11.0 audio-s/s   RTF=  2.9x
+latency  p50=  1.42s p90=  1.59s p99=  1.61s max=  1.61s
+first chunk p50=  1.42s p90=  1.59s p99=  1.61s max=  1.61s
+audio per request: mean= 3.94s
+--- sk-sse-c4: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode sse --concurrency 4 --requests 24 --corpus sk --lang sk --voice kroner
+
+mode=sse concurrency=4 corpus=sk requests=24 wall=6.8s
+throughput:   3.51 req/s     15.7 audio-s/s   RTF=  4.2x
+latency  p50=  1.14s p90=  1.22s p99=  1.23s max=  1.23s
+first chunk p50=  1.14s p90=  1.22s p99=  1.23s max=  1.23s
+audio per request: mean= 4.47s
+
+[1mlong text (28 s of audio per request)[0m
+--- long-c1: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 1 --requests 3 --corpus long
+
+mode=full concurrency=1 corpus=long requests=3 wall=4.6s
+throughput:   0.66 req/s     18.8 audio-s/s   RTF= 18.8x
+latency  p50=  1.52s p90=  1.53s p99=  1.53s max=  1.53s
+first chunk p50=  1.52s p90=  1.53s p99=  1.53s max=  1.53s
+audio per request: mean=28.74s
+--- long-c4: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 4 --requests 12 --corpus long
+
+mode=full concurrency=4 corpus=long requests=12 wall=18.2s
+throughput:   0.66 req/s     18.6 audio-s/s   RTF=  4.8x
+latency  p50=  6.07s p90=  6.27s p99=  6.49s max=  6.49s
+first chunk p50=  6.07s p90=  6.27s p99=  6.49s max=  6.49s
+audio per request: mean=28.20s
+--- long-c8: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 8 --requests 24 --corpus long
+
+mode=full concurrency=8 corpus=long requests=24 wall=36.4s
+throughput:   0.66 req/s     18.6 audio-s/s   RTF=  2.4x
+latency  p50= 12.14s p90= 12.57s p99= 13.38s max= 13.38s
+first chunk p50= 12.14s p90= 12.57s p99= 13.38s max= 13.38s
+audio per request: mean=28.19s
+
+[1moverload (64 concurrent long requests)[0m
+--- overload: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode full --concurrency 64 --requests 64 --corpus long
+
+mode=full concurrency=64 corpus=long requests=64 wall=14.8s
+errors=55 rejected=55
+  503 {"error":{"message":"server is at capacity (queued audio limit); retry shortly","type":"server_error","param":null,"code":503}}
+  503 {"error":{"message":"server is at capacity (queued audio limit); retry shortly","type":"server_error","param":null,"code":503}}
+  503 {"error":{"message":"server is at capacity (queued audio limit); retry shortly","type":"server_error","param":null,"code":503}}
+  503 {"error":{"message":"server is at capacity (queued audio limit); retry shortly","type":"server_error","param":null,"code":503}}
+  503 {"error":{"message":"server is at capacity (queued audio limit); retry shortly","type":"server_error","param":null,"code":503}}
+throughput:   0.61 req/s     17.1 audio-s/s   RTF=  2.0x
+latency  p50= 13.98s p90= 14.59s p99= 14.79s max= 14.79s
+first chunk p50= 13.98s p90= 14.59s p99= 14.79s max= 14.79s
+audio per request: mean=28.04s
+
+[1msoak: 60 s at concurrency 8, mixed corpora[0m
+--- soak: server/.venv/bin/python bench/load_test.py --url http://localhost:9001 --mode sse --concurrency 8 --duration 60 --corpus mixed
+
+mode=sse concurrency=8 corpus=mixed requests=213 wall=63.8s
+throughput:   3.34 req/s     13.8 audio-s/s   RTF=  1.8x
+latency  p50=  1.11s p90=  1.90s p99= 21.49s max= 22.21s
+first chunk p50=  1.08s p90=  1.72s p99=  2.15s max=  2.54s
+audio per request: mean= 4.13s
+
+[1mGPU state[0m
+0, NVIDIA GeForce RTX 3090, 7070 MiB, 24576 MiB, 100 %
+1, NVIDIA GeForce RTX 3090, 5181 MiB, 24576 MiB, 0 %
+
+[1mdone — full log: bench/results/run-20261029-144700.log[0m
