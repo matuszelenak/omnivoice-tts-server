@@ -1,5 +1,13 @@
 name: Build & publish Docker image
 
+# Publishing is serialised across refs: a tag push and a branch push publish the
+# same semver tags, and when they overlapped the older build could finish last and
+# overwrite the newer image. Both builds are of the same commit, so the last one
+# to finish now always publishes identical content.
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
+
 on:
   push:
     branches: [main]
