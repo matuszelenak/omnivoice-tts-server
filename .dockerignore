@@ -1,16 +1,24 @@
-# Build artifacts / dependencies reinstalled inside the image
-server/.venv
-server/models
-frontend/node_modules
-frontend/dist
-
-# VCS / tooling
+# Build context hygiene: the production build only needs frontend/ and
+# server/{app,voices,pyproject.toml,uv.lock}.
 .git
-.githooks
+.gitlab-ci.yml
 .github
-.claude
-
-# Local state
-.env
+.idea
+.vscode
+.ruff_cache
 **/__pycache__
 **/*.pyc
+**/.venv
+server/models
+server/cache
+# Reference originals stay on the host; the image ships the prepared clips.
+server/voices/*/source.*
+bench
+docs
+*.wav
+*.png
+screenshot.png
+stream_output.wav
+.env
+frontend/node_modules
+frontend/dist

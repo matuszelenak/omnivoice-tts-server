@@ -1,9 +1,29 @@
 stages:
+  - test
   - build
 
 variables:
   DOCKER_DRIVER: overlay2
   DOCKER_TLS_CERTDIR: "/certs"
+  # The heavy CUDA/torch install is cached between pipelines.
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+
+lint-and-test:
+  stage: test
+  image: ghcr.io/astral-sh/uv@sha256:929560df6a6231d0509739319bc214aaa1e78838ce1f779b1faeb877c23a50d8
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  cache:
+    key: uv-$CI_COMMIT_REF_SLUG
+    paths: [.uv-cache]
+  script:
+    - cd server
+    - uv sync --frozen --group dev
+    - uv run ruff check app tests ../bench ../scripts
+    # Unit/API tests stub the model: no GPU needed in CI.
+    - uv run pytest -q
 
 build-image:
   stage: build
@@ -17,7 +37,6 @@ build-image:
         - server/**/*
         - frontend/**/*
         - "*.Dockerfile"
-        - Dockerfile
         - .gitlab-ci.yml
     - if: '$CI_COMMIT_TAG =~ /^v/'
   before_script:

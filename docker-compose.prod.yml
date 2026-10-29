@@ -1,25 +1,78 @@
+# Production stack: one container serving the UI and the API on port 9001.
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# GPU selection: GPU=0 (default). The sibling ASR container already occupies the
+# other GPU; this service must not share it — the TTS model saturates its GPU.
 services:
   server:
-    container_name: omnivoice-tts-server
+    container_name: ${CONTAINER_NAME:-omnivoice-tts-server}
     build:
       context: .
       dockerfile: prod.Dockerfile
+    image: omnivoice-tts:prod
     ports:
-      - "9001:9001"
+      - "${HOST_PORT:-9001}:9001"
+    # All tuning lives in .env (see .env.example). Compose still interpolates
+    # GPU/HOST_PORT from that same file for the sections below.
     env_file:
       - .env
     environment:
-      - HF_TOKEN=${HF_TOKEN}
+      DEVICE: ${DEVICE:-cuda:0}
+      DTYPE: ${DTYPE:-auto}
+      NUM_STEPS: ${NUM_STEPS:-16}
+      FIRST_CHUNK_STEPS: ${FIRST_CHUNK_STEPS:-12}
+      GUIDANCE_SCALE: ${GUIDANCE_SCALE:-2.0}
+      MAX_INPUT_CHARS: ${MAX_INPUT_CHARS:-4000}
+      MAX_CHUNK_CHARS: ${MAX_CHUNK_CHARS:-320}
+      MAX_QUEUE_JOBS: ${MAX_QUEUE_JOBS:-48}
+      MAX_PENDING_AUDIO_S: ${MAX_PENDING_AUDIO_S:-180}
+      QUEUE_TIMEOUT_S: ${QUEUE_TIMEOUT_S:-120}
+      FIRST_CHUNK_BURST: ${FIRST_CHUNK_BURST:-4}
+      MAX_INFLIGHT_PER_SESSION: ${MAX_INFLIGHT_PER_SESSION:-3}
+      # Batching of already-queued chunks (1 = off)
+      BATCH_MAX_SIZE: ${BATCH_MAX_SIZE:-8}
+      BATCH_WINDOW_MS: ${BATCH_WINDOW_MS:-8}
+      BATCH_MAX_TOKENS: ${BATCH_MAX_TOKENS:-4096}
+      BATCH_LENGTH_RATIO: ${BATCH_LENGTH_RATIO:-1.6}
+      # inductor-compiled backbone (see docs/configuration.md)
+      TORCH_COMPILE: ${TORCH_COMPILE:-true}
+      COMPILE_MODE: ${COMPILE_MODE:-default}
+      # CUDA graphs for the denoising forward pass
+      CUDA_GRAPHS: ${CUDA_GRAPHS:-false}
+      GRAPH_BUCKET: ${GRAPH_BUCKET:-32}
+      GRAPH_MAX: ${GRAPH_MAX:-12}
+      GRAPH_MIN_FREE_MB: ${GRAPH_MIN_FREE_MB:-4096}
+      MAX_STREAM_SESSIONS: ${MAX_STREAM_SESSIONS:-64}
+      MAX_REF_SECONDS: ${MAX_REF_SECONDS:-8}
+      # Voice-reference transcription (the sibling parakeet-asr-server).
+      ASR_URL: ${ASR_URL:-http://host.docker.internal:9000}
+      VOICE_SAMPLES_DIR: ${VOICE_SAMPLES_DIR:-/app/voices}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      HF_TOKEN: ${HF_TOKEN:-}
+      LOGFIRE_TOKEN: ${LOGFIRE_TOKEN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
+      # Model cache (download once) and the writable voice catalogue.
       - ${HF_HOME:-./server/models}:/cache/hf
       - ${HF_HOME:-./server/cache}:/cache/torch
-      - ./server/voices:${VOICE_SAMPLES_DIR:-/app/voices}
+      - ${INDUCTOR_CACHE:-./server/cache/inductor}:/cache/inductor
+      - ${VOICES_DIR:-./server/voices}:/app/voices
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     shm_size: "2gb"
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["0"]
+              device_ids: ["${GPU:-0}"]
               capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:9001/readyz"]
+      interval: 30s
+      timeout: 10s
+      start_period: 600s
+      retries: 5
     restart: unless-stopped

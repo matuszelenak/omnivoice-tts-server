@@ -17,7 +17,23 @@ env:
   DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install dependencies
+        working-directory: server
+        run: uv sync --frozen --group dev
+      - name: Lint
+        working-directory: server
+        run: uv run ruff check app tests ../bench ../scripts
+      - name: Unit and API tests (model stubbed, no GPU)
+        working-directory: server
+        run: uv run pytest -q
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read

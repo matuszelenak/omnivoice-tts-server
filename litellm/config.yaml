@@ -1,0 +1,33 @@
+# Example LiteLLM proxy in front of the OmniVoice TTS server.
+#
+#   litellm --config litellm/config.yaml --port 4000
+#
+# LiteLLM's OpenAI provider forwards `voice`, `response_format` and `speed`
+# unchanged; `language` and `stream_format` have no slot in the OpenAI schema, so
+# they travel through `extra_body` (pin them per alias, or pass them per request
+# from a client that supports extra_body).
+
+model_list:
+  - model_name: omnivoice
+    litellm_params:
+      model: openai/omnivoice
+      api_base: http://omnivoice-tts-server:9001/v1
+      api_key: unused            # the server does not authenticate
+      # Default language for plain OpenAI clients (they cannot send one).
+      extra_body:
+        language: en
+
+  - model_name: omnivoice-sk
+    litellm_params:
+      model: openai/omnivoice
+      api_base: http://omnivoice-tts-server:9001/v1
+      api_key: unused
+      extra_body:
+        language: sk
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  drop_params: true              # ignore unsupported OpenAI fields instead of failing
+  request_timeout: 180
