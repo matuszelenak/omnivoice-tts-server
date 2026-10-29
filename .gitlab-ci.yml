@@ -25,6 +25,18 @@ lint-and-test:
     # Unit/API tests stub the model: no GPU needed in CI.
     - uv run pytest -q
 
+frontend-check:
+  stage: test
+  image: denoland/deno:2.8.1
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - cd frontend
+    - deno install --frozen
+    - deno task check
+
 build-image:
   stage: build
   image: docker:27

@@ -10,7 +10,6 @@ server/cache/
 # Node / Deno
 node_modules/
 frontend/dist/
-deno.lock
 
 # Env / local
 .env

@@ -1,7 +1,6 @@
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import wasm from 'vite-plugin-wasm'
-import topLevelAwait from 'vite-plugin-top-level-await'
 
 // Where the dev server forwards same-origin API calls. On the host this is the
 // server's published port; inside docker compose it is the `server` service.
@@ -19,7 +18,11 @@ function apiTarget(): string {
 const target = apiTarget()
 
 export default defineConfig({
-  plugins: [wasm(), topLevelAwait(), svelte()],
+  plugins: [wasm(), svelte()],
+  // Keep top-level await and modern syntax in dependencies (tiktoken's wasm
+  // glue) instead of downlevelling them with a swc-based plugin - that plugin
+  // breaks whenever @swc/core ships a new API.
+  build: { target: 'esnext' },
   server: {
     allowedHosts: ['omnivoice-dev.the-killer.app'],
     host: '0.0.0.0',

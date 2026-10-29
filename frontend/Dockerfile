@@ -3,9 +3,10 @@
 # ---- shared dependency layer ----
 FROM denoland/deno:2.8.1 AS deps
 WORKDIR /app
-COPY deno.json package.json ./
-# Populates node_modules (nodeModulesDir=auto) for Vite/Svelte.
-RUN deno install
+COPY deno.json package.json deno.lock ./
+# Populates node_modules (nodeModulesDir=auto) for Vite/Svelte. --frozen keeps
+# CI on exactly the versions the lockfile records.
+RUN deno install --frozen
 
 # ---- dev server (used by docker compose watch) ----
 FROM deps AS dev

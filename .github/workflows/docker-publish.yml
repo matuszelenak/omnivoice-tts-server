@@ -32,8 +32,22 @@ jobs:
         working-directory: server
         run: uv run pytest -q
 
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.8.1
+      - name: Install dependencies (from the committed lockfile)
+        working-directory: frontend
+        run: deno install --frozen
+      - name: Type-check the Svelte app
+        working-directory: frontend
+        run: deno task check
+
   build-and-push:
-    needs: test
+    needs: [test, frontend]
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -11,8 +11,8 @@
 FROM denoland/deno:2.8.1 AS frontend
 WORKDIR /frontend
 # Install deps first for layer caching.
-COPY frontend/deno.json frontend/package.json ./
-RUN deno install
+COPY frontend/deno.json frontend/package.json frontend/deno.lock ./
+RUN deno install --frozen
 COPY frontend/ ./
 # The bundle calls the API at its own origin (this same server), so there is no
 # API base to bake in. Outputs to /frontend/dist.
