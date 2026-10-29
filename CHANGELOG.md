@@ -50,7 +50,11 @@ The server was rewritten around the reference PyTorch model instead of
 
 - Development and production images (granian, one worker), compose stacks with
   `env_file`, `Makefile` (`build/run/status/plan/probe/bench/test/lint`), CI
-  lint+test gate, and the `v*` tag release pipeline.
+  lint+test+frontend-typecheck gate, and the `v*` tag release pipeline.
+- Production image trimmed from 7.5 GB to 6.0 GB: three-stage build on
+  `python:3.12-slim` instead of the full `uv` build image, plus pruning of
+  headers, unreferenced CUDA libraries, triton's static profiling archives and
+  the Gradio/pandas/scikit-learn stack that omnivoice only uses for its demo.
 - `make plan` measures a machine and prints the admission limits it should run
   with; the shipped defaults are calibrated for one RTX 3090.
 - Docs: API, configuration, deployment (including H200 notes), benchmarks

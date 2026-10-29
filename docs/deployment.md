@@ -7,8 +7,37 @@
 | `omnivoice-tts:prod` | `prod.Dockerfile` | API + model deps + baked Svelte UI, served by **granian** on `:9001` | production |
 | dev image | `server/Dockerfile` | API only, `uvicorn --reload` | development |
 
-The production image is ~7.5 GB (CUDA-enabled torch). Model weights are **not**
-baked in; they are downloaded on first start into `HF_HOME` (`/cache/hf`).
+The production image is **~6.0 GB** (was 7.5 GB). Model weights are **not** baked
+in; they are downloaded on first start into `HF_HOME` (`/cache/hf`).
+
+Where the size goes, and what is deliberately absent:
+
+| | size |
+| --- | --- |
+| `torch` (CUDA build) | 1.1 GB |
+| `nvidia-*` CUDA libraries (cuBLAS/cuDNN/cuFFT/cuSPARSE/NCCL/…) | 2.5 GB |
+| `triton` (needed by `torch.compile`) | 0.6 GB |
+| everything else (transformers, numpy, scipy, blingfire, …) | ~1.0 GB |
+| OS + ffmpeg + Python | ~0.8 GB |
+
+The build is three stages. The official `uv` image is a **full build environment**
+(gcc, git, LLVM, dev headers, its own Python 3.13), so it is used only to resolve
+and install wheels into `/app/.venv`; the shipped image is `python:3.12-slim`
+plus that venv. On top of that the build prunes what inference never touches:
+`torch/include` (C++ headers), `libnvrtc.alt` / `libcusolverMg` / `libnvperf`
+(archives nothing links against), triton's static profiler archives, pip and
+setuptools, `/usr/share/{doc,man,locale}`, and the Gradio/pandas/scikit-learn
+stack that `omnivoice` drags in for its demo and eval tooling.
+
+Two consequences worth knowing:
+
+* **`gcc` stays in the runtime image on purpose.** `torch.compile` compiles a
+  small C launcher per kernel through Triton, so a compiler is required at run
+  time (`Failed to find C compiler` otherwise). If you build with
+  `TORCH_COMPILE=false` you can drop `gcc`/`libc6-dev` and save another ~190 MB.
+* The CUDA libraries come from pip wheels, so `ldconfig` is run at build time to
+  register `/app/.venv/lib/**/nvidia/*/lib` — otherwise `libcudart` is not found
+  at import.
 
 ```bash
 make build                       # docker build -f prod.Dockerfile -t omnivoice-tts:prod .
